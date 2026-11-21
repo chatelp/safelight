@@ -39,6 +39,23 @@ Change the version only in `VERSION`, then run:
 uv run python scripts/sync_version.py
 ```
 
+## Lightroom Classic SDK
+
+Adobe's license does not allow redistributing the SDK, so it is not in the
+repository. Download it from the
+[Adobe Developer Console](https://developer.adobe.com/console/servicesandapis)
+(Downloads > Lightroom Classic) and unzip it into
+`vendor/lightroom-classic-sdk-<version>/`, which git ignores. Then search the
+API Reference from the command line:
+
+```bash
+uv run python scripts/sdk_inventory.py list LrDevelopController
+uv run python scripts/sdk_inventory.py show LrPhoto requestJpegThumbnail
+uv run python scripts/sdk_inventory.py since 15.0
+```
+
+[docs/LIGHTROOM_API.md](docs/LIGHTROOM_API.md) summarizes what the API allows.
+
 ## Lightroom plugin
 
 The plugin lives in `plugin/Safelight.lrplugin`. To try it, add that folder in

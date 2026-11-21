@@ -15,3 +15,6 @@ dist/
 app/**/.build/
 app/**/DerivedData/
 app/**/xcuserdata/
+
+# Third-party SDKs: the Lightroom Classic SDK cannot be redistributed (see CONTRIBUTING.md).
+vendor/
