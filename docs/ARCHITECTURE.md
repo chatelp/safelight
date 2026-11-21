@@ -22,38 +22,50 @@ This document describes the target design for Safelight 1.0. Parts marked
 
 The process an AI client launches over stdio. It exposes Safelight's tools,
 validates arguments, and forwards each call to the hub. If the hub is not
-running, the relay starts it. *Today it only exposes `safelight_status`.*
+running, the relay starts it in the background (in about half a second).
+*Today it only exposes `safelight_status`.*
 
-### Hub (*planned*, `safelight hub`)
+### Hub (`safelight hub`)
 
 A small local daemon, one per user session:
 
-- listens on a fixed port on `127.0.0.1` only;
-- requires a per-install token stored in the user's Application Support folder
-  (readable by the user only) and rejects requests carrying a browser `Origin`,
-  so web pages cannot reach it;
+- listens on `127.0.0.1:58763` only (`SAFELIGHT_PORT` overrides it);
+- writes `~/Library/Application Support/Safelight/hub.json` (port and a random
+  token, readable by the user only) and removes it when it stops;
+- requires that token on every request, refuses requests carrying a browser
+  `Origin` or an unexpected `Host`, so web pages cannot reach it;
 - keeps the queue of commands from all relays and hands them to the plugin;
-- tracks long jobs (export, analysis of a whole shoot) and their progress;
+- never retries a command: one Lightroom did not pick up in time is dropped and
+  reported as not run (`NOT_DELIVERED`); one it picked up but did not answer is
+  reported as possibly run (`TIMEOUT`);
+- tracks long jobs (export, analysis of a whole shoot) and their progress
+  (*planned*);
 - applies the confirmation policy: past a configurable number of photos, or for
   destructive actions, a command first returns a dry-run summary and only runs
-  once confirmed;
-- serves a status and activity API for the menu bar app.
+  once confirmed (*planned*);
+- serves a status API (`GET /v1/status`) for relays and the menu bar app.
 
 ### Lightroom plugin (`plugin/Safelight.lrplugin`)
 
 Lightroom Classic's SDK can listen on sockets (`LrSocket`), but each socket
 serves a single client and has to be re-bound, on a new port, after every
 disconnect. Outgoing HTTP requests (`LrHttp`) are simple and robust, so the
-plugin acts as a **client of the hub** (*planned*; the prototype in roadmap lot L1
-confirms latency and reliability before the rest is built on it):
+plugin acts as a **client of the hub**:
 
-1. when Lightroom starts, the plugin opens a long-poll request to the hub
-   ("give me the next command");
+1. when Lightroom starts, the plugin reads `hub.json` and opens a long-poll
+   request to the hub (`POST /v1/plugin/poll`, held up to 20 s);
 2. the hub answers as soon as a command is queued;
-3. the plugin runs it through the Lightroom SDK (catalog write gates,
-   `LrDevelopController`, export sessions) and posts the result back;
-4. if the hub is not running, the plugin retries every few seconds at negligible
-   cost.
+3. the plugin runs each command in its own Lightroom task through the SDK
+   (catalog write gates, `LrDevelopController`, export sessions) and posts the
+   answer to `POST /v1/plugin/result`;
+4. if the hub is not running, the plugin retries every 1 to 5 seconds at
+   negligible cost.
+
+Measured on Lightroom Classic 16.0.1 (roadmap lot L1): a command round trip
+takes 1.7 ms median (2.1 ms at the 95th percentile); the plugin connects about
+8 s after Lightroom loads it and reconnects within 1 to 2.5 s after a hub
+restart; three AI clients at once share one hub without slowdown that matters
+(3.6 ms median).
 
 This replaces the upstream design, where Lightroom opened two sockets on random
 ports, advertised them in a temporary file, and restarted them after every
