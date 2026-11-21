@@ -134,7 +134,7 @@ disconnect.
 The plugin and hub exchange a protocol version at connection time, so a
 mismatched plugin is reported clearly instead of failing on individual commands.
 
-### Menu bar app (*planned*, `app/`)
+### Menu bar app (`app/`)
 
 A native SwiftUI `MenuBarExtra` app that talks to the hub's status API:
 
@@ -145,7 +145,9 @@ A native SwiftUI `MenuBarExtra` app that talks to the hub's status API:
   Claude Code, Cursor and Codex;
 - settings: confirmation threshold, read-only mode, launch at login.
 
-The app embeds the Python hub, so users install a single signed `.dmg`.
+The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
+with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds
+(roadmap lot L7) it will embed the Python hub, so users install a single signed `.dmg`.
 
 ## Versioning
 

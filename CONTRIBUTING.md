@@ -21,7 +21,19 @@ uv run ruff check src tests scripts
 uv run ruff format --check src tests scripts
 uv run pytest
 ./scripts/check_lua.sh
+swift test --package-path app
 ```
+
+## Menu bar app
+
+Needs Xcode (for `actool` and Swift Testing).
+
+```bash
+swift test --package-path app
+./scripts/build_app.sh && open build/Safelight.app
+```
+
+See [app/README.md](app/README.md).
 
 ## Running the MCP server
 

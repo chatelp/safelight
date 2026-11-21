@@ -54,7 +54,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 |---|---|
 | `src/safelight/` | Python package: MCP relay and hub |
 | `plugin/Safelight.lrplugin/` | Lightroom Classic plugin (Lua) |
-| `app/` | macOS menu bar app (Swift, not started) |
+| `app/` | macOS menu bar app (SwiftUI) and design assets |
 | `docs/` | Architecture, tools ([TOOLS.md](docs/TOOLS.md)), plugin commands ([PLUGIN_COMMANDS.md](docs/PLUGIN_COMMANDS.md)), Lightroom API map ([LIGHTROOM_API.md](docs/LIGHTROOM_API.md)), design ([DESIGN.md](docs/DESIGN.md)) |
 | `scripts/` | Development helpers |
 | `tests/` | Python tests |
