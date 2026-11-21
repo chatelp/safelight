@@ -58,17 +58,15 @@ uv run python scripts/sdk_inventory.py since 15.0
 
 ## Lightroom plugin
 
-The plugin lives in `plugin/Safelight.lrplugin`. To load it straight from your
-checkout, run:
+The plugin lives in `plugin/Safelight.lrplugin`. Load it straight from your checkout
+once: in Lightroom Classic, **File > Plug-in Manager > Add**, then choose that folder.
+After changing Lua code, select Safelight in the Plug-in Manager and click
+**Reload Plug-in** (under Plug-in Author Tools); there is no need to restart Lightroom,
+and the plugin reconnects to the hub on its own. (Plugins placed in Lightroom's
+`Modules` folder cannot be reloaded that way.)
 
-```bash
-./scripts/dev_link_plugin.sh
-```
-
-then restart Lightroom Classic. It connects to the hub on its own. Its log is
-written to `safelight.log` in the macOS temporary folder; the path is shown
-under **File > Plug-in Extras > Safelight Status**. Remove the link with
-`./scripts/dev_link_plugin.sh --remove`.
+Its log is written to `safelight.log` in the macOS temporary folder; the path is shown
+under **File > Plug-in Extras > Safelight Status**.
 
 ## Talking to Lightroom from the terminal
 
