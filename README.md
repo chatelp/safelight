@@ -50,7 +50,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 | Path | Contents |
 |---|---|
-| `src/safelight/` | Python package: MCP server, hub (in progress) |
+| `src/safelight/` | Python package: MCP relay and hub |
 | `plugin/Safelight.lrplugin/` | Lightroom Classic plugin (Lua) |
 | `app/` | macOS menu bar app (Swift, not started) |
 | `docs/` | Architecture, Lightroom API capability map ([LIGHTROOM_API.md](docs/LIGHTROOM_API.md)) |

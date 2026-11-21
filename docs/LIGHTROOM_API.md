@@ -7,9 +7,10 @@ needs. It drives the design of Safelight's tools.
 - **Source:** Adobe Lightroom Classic SDK 16.0 (build 202611041403), API
   Reference and guides. The SDK itself is not redistributed here; download it
   from the Adobe Developer Console.
-- **Not yet verified live.** Everything below comes from the documentation.
-  Items marked *verify* need a check against a running Lightroom; the transport
-  prototype (roadmap lot L1) includes that inspection.
+- **Verification status.** Everything below comes from the documentation.
+  Items marked *verify* still need a check against a running Lightroom; the
+  [live findings](#live-findings-lightroom-classic-1601) at the end were
+  checked on Lightroom Classic 16.0.1 during roadmap lot L1.
 - **Minimum version:** Safelight supports Lightroom Classic 14.0 and later.
   Capabilities introduced after 14.0 are listed with their version and must be
   feature-gated at runtime (`LrApplication.versionTable()`).
@@ -182,3 +183,35 @@ Legend: ✅ available · ⚠️ partial or constrained · ❌ not available
 - **New opportunities found in the SDK:** driving Lightroom's AI tools
   (Denoise, reflection and people removal), tethered capture, and observing the
   user's own Develop changes (useful for learning their style).
+
+## Live findings (Lightroom Classic 16.0.1)
+
+Checked with the read-only `inspect.*` commands of the plugin on 2026-11-21.
+
+- **Transport:** `LrHttp.post` long-polling works: 1.7 ms median per command,
+  clean reconnection after hub or Lightroom restarts.
+- **Previews:** `requestJpegThumbnail` returned 256 px in 6 ms, 1024 px in 14 ms
+  and 2048 px in 51 ms (about 60 KB, 210 KB and 620 KB) for a photo with existing
+  previews. Speed on photos without previews remains to be measured.
+- **Develop settings:** `getDevelopSettings` returned 181 keys for a DNG without
+  masks and 195 for a raw file with two masks (Process Version 6): numbers,
+  booleans, strings and 10 to 11 tables (`AILook`, `FilterList`, `LensBlur`,
+  `Look`, `MaskGroupBasedCorrections`, `PointColors`, `RedEyeInfo`, tone curves).
+- **Masks through the catalog path:** `MaskGroupBasedCorrections` holds every
+  mask with its local sliders (`LocalExposure2012`, `LocalTexture`,
+  `LocalTemperature`, `LocalCurveRefineSaturation`, …), its components
+  (`CorrectionMasks` with type, subtype, inverted flag, reference point) and
+  stable IDs. Local adjustments can therefore be **read for any photo without
+  the Develop UI**. Writing them back this way is *verify* (lot L3, on a test
+  photo).
+- **Masks through the Develop UI path:** `getAllMasks` returns each mask's name,
+  ID and tools (type `aiSelection`, subtypes `subject`, `object`, …); the IDs
+  match `CorrectionID` / `MaskID` in the develop settings.
+- **Local sliders through the Develop UI path:** `getValue("local_…")` returns
+  nothing when no mask is selected. Names and behavior with a selected mask are
+  *verify* (lot L3).
+- **Raw metadata:** `getRawMetadata(nil)` returned 50 keys, including some not in
+  the documentation (`captureTime`, `root_uuid`, `metadataDate`,
+  `orientation`). Keys without a value (for example `gps`) are omitted.
+- **`selectTool`** accepts only the documented values; the upstream names
+  (`brush`, `graduated-filter`, …) are rejected.

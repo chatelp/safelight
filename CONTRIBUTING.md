@@ -58,7 +58,25 @@ uv run python scripts/sdk_inventory.py since 15.0
 
 ## Lightroom plugin
 
-The plugin lives in `plugin/Safelight.lrplugin`. To try it, add that folder in
-Lightroom Classic under **File > Plug-in Manager > Add**. Its log is written to
-`safelight.log` in the macOS temporary folder; the path is shown under
-**File > Plug-in Extras > Safelight Status**.
+The plugin lives in `plugin/Safelight.lrplugin`. To load it straight from your
+checkout, run:
+
+```bash
+./scripts/dev_link_plugin.sh
+```
+
+then restart Lightroom Classic. It connects to the hub on its own. Its log is
+written to `safelight.log` in the macOS temporary folder; the path is shown
+under **File > Plug-in Extras > Safelight Status**. Remove the link with
+`./scripts/dev_link_plugin.sh --remove`.
+
+## Talking to Lightroom from the terminal
+
+```bash
+uv run safelight status                          # hub and Lightroom state
+uv run safelight bench -n 100                    # round-trip latency
+uv run safelight call inspect.app                # any plugin command, with JSON params
+uv run safelight call inspect.thumbnails '{"sizes": [512]}'
+```
+
+The `inspect.*` commands are read-only.

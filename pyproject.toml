@@ -22,6 +22,8 @@ classifiers = [
 dependencies = [
   "mcp>=2.3,<3",
   "pydantic>=2.7",
+  "starlette>=0.40",
+  "uvicorn>=0.30",
 ]
 
 [project.urls]
