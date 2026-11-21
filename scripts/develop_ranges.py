@@ -3,11 +3,12 @@
 `src/safelight/data/develop_ranges.json` is the single source of truth. This script:
 
     capture  asks Lightroom for the range of every numeric develop setting on a raw photo
-             and on a non-raw photo (photo ids from `safelight call photos.get`), writes the
-             JSON, then regenerates the Lua table. Opens each photo in Develop.
+             and, if given, on a non-raw photo (photo ids from `safelight call photos.get`),
+             writes the JSON, then regenerates the Lua table. Opens each photo in Develop.
+             Without --non-raw, the non-raw overrides already in the JSON are kept.
     generate writes plugin/Safelight.lrplugin/DevelopRanges.lua from the JSON.
 
-    uv run python scripts/develop_ranges.py capture --raw <uuid> --non-raw <uuid>
+    uv run python scripts/develop_ranges.py capture --raw <uuid> [--non-raw <uuid>]
     uv run python scripts/develop_ranges.py generate
 """
 
@@ -54,13 +55,14 @@ def generate() -> None:
     print(f"wrote {LUA.relative_to(ROOT)}")
 
 
-async def _capture(raw_uuid: str, non_raw_uuid: str) -> None:
+async def _capture(raw_uuid: str, non_raw_uuid: str | None) -> None:
     sys.path.insert(0, str(ROOT / "src"))
     from safelight.hub_client import HubClient
 
     client = HubClient()
     found: dict[str, dict[str, list[float]]] = {}
-    for label, uuid in (("raw", raw_uuid), ("non_raw", non_raw_uuid)):
+    targets = [("raw", raw_uuid)] + ([("non_raw", non_raw_uuid)] if non_raw_uuid else [])
+    for label, uuid in targets:
         reply = await client.run("inspect.develop_ranges", {"uuids": [uuid]}, wait_s=120)
         if reply.get("state") != "succeeded":
             raise SystemExit(f"{label}: {json.dumps(reply, indent=2)}")
@@ -68,13 +70,23 @@ async def _capture(raw_uuid: str, non_raw_uuid: str) -> None:
         print(f"{label}: {result['format']} photo, {len(result['ranges'])} ranges")
         found[label] = result["ranges"]
 
-    raw, non_raw = found["raw"], found["non_raw"]
-    common = {k: v for k, v in raw.items() if non_raw.get(k) == v}
+    raw = found["raw"]
+    if "non_raw" in found:
+        non_raw = found["non_raw"]
+        common = {k: v for k, v in raw.items() if non_raw.get(k) == v}
+        non_raw_only = {k: v for k, v in non_raw.items() if k not in common}
+        source = "raw and non-raw photos"
+    else:
+        # Keep the documented non-raw overrides; everything else is shared.
+        previous = json.loads(DATA.read_text(encoding="utf-8"))
+        non_raw_only = previous.get("non_raw", {})
+        common = {k: v for k, v in raw.items() if k not in non_raw_only}
+        source = "a raw photo (non-raw overrides kept from the documentation)"
     data = {
-        "source": f"captured from Lightroom Classic with getRange on {date.today().isoformat()}",
+        "source": f"captured with getRange from {source} on {date.today().isoformat()}",
         "common": dict(sorted(common.items())),
         "raw": {k: v for k, v in sorted(raw.items()) if k not in common},
-        "non_raw": {k: v for k, v in sorted(non_raw.items()) if k not in common},
+        "non_raw": dict(sorted(non_raw_only.items())),
     }
     DATA.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
     print(f"wrote {DATA.relative_to(ROOT)}")
@@ -85,7 +97,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     capture = sub.add_parser("capture")
     capture.add_argument("--raw", required=True, help="uuid of a raw photo")
-    capture.add_argument("--non-raw", required=True, help="uuid of a JPEG or TIFF photo")
+    capture.add_argument("--non-raw", help="uuid of a JPEG or TIFF photo")
     sub.add_parser("generate")
     args = parser.parse_args()
     if args.command == "capture":

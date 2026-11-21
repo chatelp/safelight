@@ -81,7 +81,9 @@ function Photos.summaries(photos)
             captured_at = r.dateTimeOriginalISO8601,
             rating = r.rating or 0,
             pick = r.pickStatus or 0,
-            label = nonEmpty(r.colorNameForLabel ~= "none" and r.colorNameForLabel or nil),
+            -- Lightroom reports "gray" (not the documented "none") for photos without a label.
+            label = (r.colorNameForLabel ~= "none" and r.colorNameForLabel ~= "gray")
+                and nonEmpty(r.colorNameForLabel) or nil,
             virtual_copy = r.isVirtualCopy == true,
             copy_name = nonEmpty(f.copyName),
             camera = nonEmpty(f.cameraModel),

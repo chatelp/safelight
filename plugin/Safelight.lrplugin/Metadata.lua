@@ -166,27 +166,35 @@ function Metadata.addKeywords(params, job)
         return Batch.plan(photos, "Add " .. #params.keywords .. " keywords to " .. #photos .. " photos", missing)
     end
     local catalog = Photos.catalog()
-    local paths = {}
-    for _, path in ipairs(params.keywords) do
-        if #splitPath(path) > 0 then
-            paths[#paths + 1] = path
-        end
-    end
+    local created = {}
     Batch.writeOnce("Safelight: Create Keywords", function()
-        for _, path in ipairs(paths) do
+        for _, path in ipairs(params.keywords) do
+            local parts = splitPath(path)
             local parent = nil
-            for _, name in ipairs(splitPath(path)) do
+            for _, name in ipairs(parts) do
                 parent = catalog:createKeyword(name, {}, true, parent, true)
+                if not parent then
+                    break
+                end
+            end
+            if #parts > 0 then
+                created[#created + 1] = { path = path, keyword = parent }
             end
         end
     end)
-    local keywords = {}
-    for _, path in ipairs(paths) do
-        local keyword = findByPath(path)
-        if not keyword then
-            error("Keyword could not be created: " .. path)
+    -- The objects returned inside the write gate are usable once it has finished; fall back
+    -- to a lookup by path, and report keywords Lightroom refused to create.
+    local keywords, notCreated = {}, {}
+    for _, entry in ipairs(created) do
+        local keyword = entry.keyword or findByPath(entry.path)
+        if keyword then
+            keywords[#keywords + 1] = keyword
+        else
+            notCreated[#notCreated + 1] = entry.path
         end
-        keywords[#keywords + 1] = keyword
+    end
+    if #keywords == 0 then
+        error("Lightroom refused to create these keywords: " .. table.concat(notCreated, ", "))
     end
     local result = Batch.write("Safelight: Add Keywords", photos, job, function(photo)
         for _, keyword in ipairs(keywords) do
@@ -194,6 +202,7 @@ function Metadata.addKeywords(params, job)
         end
     end)
     result.missing = missing
+    result.keywords_not_created = notCreated
     if result.cancelled then
         return Result.stoppedBatch(result)
     end

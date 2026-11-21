@@ -283,7 +283,7 @@ function Develop.listSnapshots(params)
     local photo = Photos.resolve(params)[1]
     local snapshots = {}
     for _, snapshot in ipairs(photo:getDevelopSnapshots() or {}) do
-        snapshots[#snapshots + 1] = { id = snapshot.snapshotID, name = snapshot.snapshotName }
+        snapshots[#snapshots + 1] = { id = snapshot.snapshotID, name = snapshot.name }
     end
     return { uuid = Photos.uuid(photo), snapshots = snapshots }
 end
@@ -309,7 +309,7 @@ end
 
 local function findSnapshot(photo, params)
     for _, snapshot in ipairs(photo:getDevelopSnapshots() or {}) do
-        if snapshot.snapshotID == params.snapshot_id or snapshot.snapshotName == params.name then
+        if snapshot.snapshotID == params.snapshot_id or (params.name and snapshot.name == params.name) then
             return snapshot
         end
     end
@@ -321,12 +321,12 @@ function Develop.applySnapshot(params)
     local photo = Photos.resolve(params)[1]
     local snapshot = findSnapshot(photo, params)
     if not snapshot then
-        error("No such snapshot on this photo")
+        error("No snapshot with this id or name on this photo")
     end
     Batch.writeOnce("Safelight: Apply Snapshot", function()
         photo:applyDevelopSnapshot(snapshot.snapshotID)
     end)
-    return { uuid = Photos.uuid(photo), applied = snapshot.snapshotName }
+    return { uuid = Photos.uuid(photo), applied = snapshot.name }
 end
 
 -- snapshots.delete {uuids|target, snapshot_id | name}
@@ -334,15 +334,15 @@ function Develop.deleteSnapshot(params)
     local photo = Photos.resolve(params)[1]
     local snapshot = findSnapshot(photo, params)
     if not snapshot then
-        error("No such snapshot on this photo")
+        error("No snapshot with this id or name on this photo")
     end
     if params.dry_run then
-        return { dry_run = true, affected = 1, summary = "Delete snapshot '" .. snapshot.snapshotName .. "'" }
+        return { dry_run = true, affected = 1, summary = "Delete snapshot '" .. snapshot.name .. "'" }
     end
     Batch.writeOnce("Safelight: Delete Snapshot", function()
         photo:deleteDevelopSnapshot(snapshot.snapshotID)
     end)
-    return { uuid = Photos.uuid(photo), deleted = snapshot.snapshotName }
+    return { uuid = Photos.uuid(photo), deleted = snapshot.name }
 end
 
 -- inspect.develop_ranges {uuids|target}: real slider ranges for one photo (Develop module).
