@@ -171,5 +171,7 @@ async def run_against_local_hub() -> None:
     config = HubConfig.read(hub_config_path(client.home))
     if config is None:
         raise SystemExit("hub.json not found")
+    from .fake_catalog import FakeCatalog
+
     print(f"Fake Lightroom plugin connected to the hub on port {config.port}. Ctrl-C to stop.")
-    await FakePlugin(config.port, config.token, wait_s=20).run()
+    await FakePlugin(config.port, config.token, FakeCatalog().handlers(), wait_s=20).run()

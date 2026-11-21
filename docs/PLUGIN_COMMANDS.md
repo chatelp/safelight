@@ -30,7 +30,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 |---|---|---|---|
 | `catalog.info` | R | — | Lightroom version, catalog path, current module, active photo, selection size |
 | `photos.get` | R | photos, `limit`, `offset` | photo descriptions (file, format, size, capture date, rating, flag, label, camera, lens, exposure, GPS, title, caption, keywords) |
-| `photos.search` | R | `search` (smart-collection search description), `sort`, `ascending`, `limit`, `offset` | matching photo descriptions and `total` |
+| `photos.search` | R | `search` (one criterion, or `{combine, items: [...]}`), `sort`, `ascending`, `limit`, `offset` | matching photo descriptions and `total` |
 | `photos.preview` | R | photo, `size` (64–4096, a minimum) | base64 JPEG rendered by Lightroom with the edits |
 | `photos.rotate` | M | photos, `direction` (`left`/`right`) | batch result |
 | `photos.create_virtual_copies` | M | photos, `name` | ids of the new copies (one per photo) |

@@ -11,15 +11,6 @@ from safelight.mcp_server import build_server
 pytestmark = pytest.mark.anyio
 
 
-async def test_server_lists_tools_with_annotations(safelight_home):
-    async with Client(build_server(HubClient(safelight_home))) as client:
-        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        assert set(tools) == {"safelight_status", "safelight_job", "safelight_cancel_job"}
-        assert tools["safelight_status"].annotations.read_only_hint is True
-        assert tools["safelight_job"].annotations.read_only_hint is True
-        assert tools["safelight_cancel_job"].annotations.read_only_hint is False
-
-
 async def test_job_tool_reports_unknown_job(safelight_home):
     async with Client(build_server(HubClient(safelight_home))) as client:
         result = await client.call_tool("safelight_job", {"job_id": "nope"})

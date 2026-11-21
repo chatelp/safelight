@@ -51,14 +51,27 @@ function Catalog.getPhotos(params)
 end
 
 -- photos.search {search, sort?, ascending?, limit?, offset?}: Lightroom's smart collection
--- search engine. `search` is a searchDesc table, e.g.
--- { criteria = "rating", operation = ">=", value = 4 } or { combine = "intersect", {...}, {...} }.
+-- search engine. `search` is one criterion, e.g. { criteria = "rating", operation = ">=",
+-- value = 4 }, or { combine = "intersect" | "union" | "exclude", items = { ... } }.
+-- Combined searches arrive as {combine = ..., items = {...}} because JSON cannot carry
+-- Lua's mixed tables; Lightroom wants {combine = ..., [1] = ..., [2] = ...}.
+local function toSearchDesc(desc)
+    if type(desc) ~= "table" or type(desc.items) ~= "table" then
+        return desc
+    end
+    local out = { combine = desc.combine or "intersect" }
+    for index, item in ipairs(desc.items) do
+        out[index] = toSearchDesc(item)
+    end
+    return out
+end
+
 function Catalog.search(params)
     if type(params.search) ~= "table" then
         error("search must be a search description object")
     end
     local found = Photos.catalog():findPhotos({
-        searchDesc = params.search,
+        searchDesc = toSearchDesc(params.search),
         sort = params.sort,
         ascending = params.ascending == true,
     }) or {}
@@ -218,7 +231,7 @@ function Catalog.createCollection(params)
             if type(params.search) ~= "table" then
                 error("a smart collection needs a search description")
             end
-            created = catalog:createSmartCollection(params.name, params.search, parent, true)
+            created = catalog:createSmartCollection(params.name, toSearchDesc(params.search), parent, true)
         else
             created = catalog:createCollection(params.name, parent, true)
         end
