@@ -171,11 +171,23 @@ and [`app-icon-small.svg`](../app/Design/masters/app-icon-small.svg).
 
 The menu bar icon is a **template image**: black and alpha only. macOS tints it
 for light and dark menu bars and for the selected state. It is drawn on an
-18 × 18 pt canvas, with content 14 pt tall. The asset catalog has @1x and @2x
+18 × 18 pt canvas, with content about 15 pt tall. The asset catalog has @1x and @2x
 PNGs, and the masters are in `app/Design/masters/menubar-*.svg`.
 
-The silhouette (shade above a cone) never changes size. The amount of ink
-shows the state:
+The glyph is the app icon's lamp, from top to bottom:
+
+- a short cord, 2 pt long;
+- the shade: 4 pt wide at the top, 9.6 pt at the rim, 4.2 pt tall;
+- a 1.6 pt gap;
+- the cone of light: 4 pt wide at the top, and no wider than the shade's rim
+  at the bottom.
+
+These proportions keep it from reading as a fir tree. Two triangles stacked
+with no gap, the lower one wider, look like a tree at 18 pt. The cord, the gap
+and a cone no wider than the shade make it read as a lamp hanging from the
+ceiling.
+
+The silhouette never changes size. The amount of ink shows the state:
 
 | State | Asset | Drawing |
 |---|---|---|
