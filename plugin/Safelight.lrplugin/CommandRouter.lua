@@ -1,6 +1,7 @@
 local LrTasks = import "LrTasks"
 
 local Logger = require "Logger"
+local Version = require "Version"
 local CatalogActions = require "CatalogActions"
 local CollectionActions = require "CollectionActions"
 local DevelopActions = require "DevelopActions"
@@ -19,24 +20,23 @@ end
 register("system.ping", function(_)
     return {
         pong = true,
-        plugin = "Lightroom MCP Custom",
-        version = "0.4.0",
+        plugin = "Safelight",
+        version = Version.string,
         now = os.time(),
     }
 end)
 
 register("system.status", function(_)
-    local state = _G.LightroomMCPCustom or {}
+    local state = _G.Safelight or {}
     local count = 0
     for _, _ in pairs(CommandRouter.handlers) do
         count = count + 1
     end
 
     return {
-        running = state.running == true,
+        version = state.version,
         started_at = state.startedAt,
         commands_registered = count,
-        port_file = state.portFile,
         log_file = state.logFile,
     }
 end)

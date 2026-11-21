@@ -3,10 +3,10 @@ local LrPathUtils = import "LrPathUtils"
 
 local Logger = {}
 
-local logger = LrLogger("LightroomMCPCustom")
+local logger = LrLogger("Safelight")
 logger:enable("logfile")
 
-local logPath = LrPathUtils.child(LrPathUtils.getStandardFilePath("temp"), "lightroom_mcp_custom.log")
+local logPath = LrPathUtils.child(LrPathUtils.getStandardFilePath("temp"), "safelight.log")
 
 local function writeLine(level, message)
     logger:trace("[" .. level .. "] " .. tostring(message))

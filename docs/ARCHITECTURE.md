@@ -1,97 +1,82 @@
 # Architecture
 
-`lightroom-classic-mcp` works well locally because the runtime is split into
-three pieces with a clean boundary between them:
+This document describes the target design for Safelight 1.0. Parts marked
+*planned* do not exist yet.
 
-1. A Lightroom Classic plugin bundle in `plugin/LightroomMCPCustom.lrplugin`
-2. A localhost bridge implemented inside Lightroom with `LrSocket`
-3. A Python MCP server that exposes stable tools over stdio
+## Goals
 
-The MCP layer should be thought of as two separate capabilities:
+1. **AI clients never fail because Lightroom is closed.** The MCP server starts
+   instantly and reports Lightroom's state through its tools.
+2. **Lightroom can be opened, closed or restarted at any time** without
+   restarting anything else.
+3. **Several AI clients at once** (Claude Desktop and Claude Code, for example)
+   share one Lightroom session.
+4. **Safe by default:** localhost only, authenticated, and bulk or destructive
+   changes need confirmation.
+5. **Fast on large shoots:** hundreds of photos per command, long jobs with
+   progress.
 
-1. Lightroom-backed metadata and editing operations
-2. direct file-path inspection that the agent can perform once Lightroom returns the original image path
+## Components
 
-## Why The Current Setup Is Reliable
+### MCP relay (`safelight mcp`)
 
-### 1. Lightroom owns the catalog writes
+The process an AI client launches over stdio. It exposes Safelight's tools,
+validates arguments, and forwards each call to the hub. If the hub is not
+running, the relay starts it. *Today it only exposes `safelight_status`.*
 
-The plugin executes mutations inside Lightroom itself, using the SDK and
-catalog write gates. That avoids direct `.lrcat` mutation and keeps edits
-inside the host application's supported transaction model.
+### Hub (*planned*, `safelight hub`)
 
-### 2. The Python process never touches Lightroom internals directly
+A small local daemon, one per user session:
 
-The Python side only speaks JSON over localhost sockets. That keeps the MCP
-server simple, avoids application embedding, and makes reconnection logic much
-easier to reason about.
+- listens on a fixed port on `127.0.0.1` only;
+- requires a per-install token stored in the user's Application Support folder
+  (readable by the user only) and rejects requests carrying a browser `Origin`,
+  so web pages cannot reach it;
+- keeps the queue of commands from all relays and hands them to the plugin;
+- tracks long jobs (export, analysis of a whole shoot) and their progress;
+- applies the confirmation policy: past a configurable number of photos, or for
+  destructive actions, a command first returns a dry-run summary and only runs
+  once confirmed;
+- serves a status and activity API for the menu bar app.
 
-It can still return Lightroom-provided absolute file paths so the agent can
-inspect originals directly without forcing every visual check through an export.
+### Lightroom plugin (`plugin/Safelight.lrplugin`)
 
-### 3. The handshake is explicit
+Lightroom Classic's SDK can listen on sockets (`LrSocket`), but each socket
+serves a single client and has to be re-bound, on a new port, after every
+disconnect. Outgoing HTTP requests (`LrHttp`) are simple and robust, so the
+plugin acts as a **client of the hub** (*planned*; the prototype in roadmap lot L1
+confirms latency and reliability before the rest is built on it):
 
-When the plugin bridge starts, it writes the active send/receive ports into
-`/tmp/lightroom_mcp_custom_ports.json`. The Python bridge waits for that file,
-reads the ports, and then connects. That makes startup deterministic and keeps
-the plugin and MCP server loosely coupled.
+1. when Lightroom starts, the plugin opens a long-poll request to the hub
+   ("give me the next command");
+2. the hub answers as soon as a command is queued;
+3. the plugin runs it through the Lightroom SDK (catalog write gates,
+   `LrDevelopController`, export sessions) and posts the result back;
+4. if the hub is not running, the plugin retries every few seconds at negligible
+   cost.
 
-### 4. The managed startup script closes the reliability gap
+This replaces the upstream design, where Lightroom opened two sockets on random
+ports, advertised them in a temporary file, and restarted them after every
+disconnect.
 
-`scripts/start_managed_server.sh` does four important things:
+The plugin and hub exchange a protocol version at connection time, so a
+mismatched plugin is reported clearly instead of failing on individual commands.
 
-1. refreshes the plugin install
-2. optionally launches Lightroom if the user enabled auto-launch
-3. waits until the bridge is ready
-4. launches the long-lived MCP server
+### Menu bar app (*planned*, `app/`)
 
-That wrapper is the main reason the setup feels smooth day to day on the
-original machine, but clean-install testing showed that automatic app launch
-should be opt-in, not the default.
+A native SwiftUI `MenuBarExtra` app that talks to the hub's status API:
 
-### 5. Validation happens before Lightroom writes
+- status icon: hub running, Lightroom connected, or not;
+- connected AI clients and a live log of commands;
+- open Lightroom, start or stop the hub, open logs;
+- install or update the Lightroom plugin, register Safelight with Claude Desktop,
+  Claude Code, Cursor and Codex;
+- settings: confirmation threshold, read-only mode, launch at login.
 
-The Python side validates and clamps develop parameters before they reach the
-plugin. That reduces bad writes, gives better error messages, and makes MCP
-clients safer to use.
+The app embeds the Python hub, so users install a single signed `.dmg`.
 
-## Operational Lessons
+## Versioning
 
-The clean-install and packaging pass surfaced a few concrete lessons:
-
-- multiple local checkouts can silently create path drift in MCP registration
-- Claude `local` scope is project-scoped, so verification has to happen inside the repo
-- auto-launching Lightroom from the MCP wrapper is convenient for demos but noisy in daily use
-- version strings must be updated in the Lightroom plugin code, not just package metadata
-- the project should be tested from a true fresh clone, not only from a long-lived working tree
-- export is best treated as verification/output, not the default path for inspection
-- the MCP should stay low-level and general-purpose; examples belong in docs rather than new opinionated workflow APIs
-
-## Public Release Constraints
-
-The current design is intentionally local-first:
-
-- macOS only
-- Adobe Lightroom Classic only
-- assumes the user can install a Lightroom plugin bundle
-- assumes a local MCP client will launch the managed server
-
-That is acceptable for an open-source release, but the install path has to be
-documented clearly and tested as a fresh checkout, not just as a developer's
-existing machine.
-
-## Release Strategy
-
-For public release, keep the architecture the same:
-
-- do not split the plugin and Python server into separate repos yet
-- do not replace the socket bridge
-- do not add more runtime layers
-
-The highest-value work is packaging and reliability:
-
-- cleaner install instructions
-- safer release scripts
-- CI for unit tests
-- optional live integration tests
-- removal of local artifacts from source control
+The repository's `VERSION` file is the single source of truth.
+`scripts/sync_version.py` copies it into the plugin's `Info.lua`, and a test
+fails if they drift.

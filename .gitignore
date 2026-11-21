@@ -1,16 +1,17 @@
 .DS_Store
-.coverage
-.python-version
-.pytest_cache/
 .venv/
 __pycache__/
-*.egg-info/
-*.log
 *.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+*.log
 
 build/
 dist/
-output/
-tmp/
 
-plugin/**/*.backup.*
+# Swift / Xcode
+app/**/.build/
+app/**/DerivedData/
+app/**/xcuserdata/
