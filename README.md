@@ -1,3 +1,5 @@
+<p align="center"><img src="app/Design/banner.png" alt="A darkroom safelight lighting a row of prints" width="800"></p>
+
 # Safelight for Lightroom Classic
 
 Safelight lets Claude and other MCP clients work in your Adobe Lightroom Classic
