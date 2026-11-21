@@ -22,8 +22,10 @@ This document describes the target design for Safelight 1.0. Parts marked
 
 The process an AI client launches over stdio. It exposes Safelight's tools,
 validates arguments, and forwards each call to the hub. If the hub is not
-running, the relay starts it in the background (in about half a second).
-*Today it only exposes `safelight_status`.*
+running, the relay starts it in the background (in about half a second). It
+passes the AI client's own name (for example "Claude Desktop") to the hub for the
+activity log. *Today it exposes `safelight_status`, `safelight_job` and
+`safelight_cancel_job`; the Lightroom tools arrive in roadmap lot L4.*
 
 ### Hub (`safelight hub`)
 
@@ -34,16 +36,65 @@ A small local daemon, one per user session:
   token, readable by the user only) and removes it when it stops;
 - requires that token on every request, refuses requests carrying a browser
   `Origin` or an unexpected `Host`, so web pages cannot reach it;
-- keeps the queue of commands from all relays and hands them to the plugin;
-- never retries a command: one Lightroom did not pick up in time is dropped and
-  reported as not run (`NOT_DELIVERED`); one it picked up but did not answer is
-  reported as possibly run (`TIMEOUT`);
-- tracks long jobs (export, analysis of a whole shoot) and their progress
-  (*planned*);
-- applies the confirmation policy: past a configurable number of photos, or for
-  destructive actions, a command first returns a dry-run summary and only runs
-  once confirmed (*planned*);
-- serves a status API (`GET /v1/status`) for relays and the menu bar app.
+- turns every command into a **job** and hands it to the plugin;
+- applies the **command policy** before running anything that changes the
+  catalog;
+- keeps an **activity log** and the list of recently seen AI clients;
+- stores the user's **settings** in `settings.json` next to `hub.json`.
+
+#### Jobs
+
+Each command becomes a job with an id and a state: `queued`, `running`,
+`succeeded`, `failed` or `cancelled`. A client waits up to `wait_s` seconds
+(30 by default) for the result; if the job is still running it gets the job id
+and follows it with `GET /v1/jobs/{id}`. While a job runs, the plugin may report
+progress (`done`, `total`, `message`).
+
+- **Never retried.** A job Lightroom did not pick up within 10 s is cancelled and
+  reported as not run (`NOT_DELIVERED`). A job Lightroom picked up keeps running
+  as long as Lightroom stays connected; if Lightroom disconnects, it fails with
+  `LIGHTROOM_DISCONNECTED` ("it may or may not have completed").
+- **Cancellation is cooperative.** `POST /v1/jobs/{id}/cancel` removes a queued
+  job at once; for a running job, the plugin learns about it in the answer to
+  its next progress report and stops. Commands that report no progress run to
+  completion. Work already done is kept.
+- Finished jobs stay readable for an hour.
+
+#### Command policy and confirmations
+
+`src/safelight/policy.py` describes each command: read-only, mutating,
+destructive, and whether the plugin can simulate it (`dry_run`). Unknown
+commands count as mutating.
+
+1. **Read-only mode** (a setting) refuses every mutating command.
+2. A mutating command that supports a dry run is first simulated: the plugin
+   returns how many photos it would touch.
+3. If that number exceeds the **confirmation threshold** (a setting, 50 by
+   default), or if the command is destructive, nothing runs. The hub answers
+   `confirmation_required` with a summary and a single-use token, valid 10
+   minutes and bound to the exact command and parameters.
+4. The AI client shows the summary to the user and, only after the user
+   approves, sends the same command again with the token.
+
+The AI cannot change settings: they are only reachable through the local API
+(the CLI today, the menu bar app later).
+
+#### HTTP API
+
+| Endpoint | Used by | Purpose |
+|---|---|---|
+| `GET /v1/status` | relays, app | hub, plugin, jobs, clients, settings |
+| `POST /v1/rpc` | relays, CLI | run a command (`command`, `params`, `wait_s`, `confirm`) |
+| `GET /v1/jobs`, `GET /v1/jobs/{id}?wait_s=` | relays, app | recent jobs, one job |
+| `POST /v1/jobs/{id}/cancel` | relays, app | cancel a job |
+| `GET /v1/activity?after=` | app | activity events after a sequence number |
+| `GET`/`PUT /v1/settings` | app, CLI | confirmation threshold, read-only mode |
+| `POST /v1/plugin/poll` | plugin | long-poll for jobs |
+| `POST /v1/plugin/progress` | plugin | report progress, learn about cancellation |
+| `POST /v1/plugin/result` | plugin | deliver a job's result |
+
+Every request carries the `X-Safelight-Token` header; relays and the CLI also
+send `X-Safelight-Client` with the client's name.
 
 ### Lightroom plugin (`plugin/Safelight.lrplugin`)
 
@@ -56,8 +107,11 @@ plugin acts as a **client of the hub**:
    request to the hub (`POST /v1/plugin/poll`, held up to 20 s);
 2. the hub answers as soon as a command is queued;
 3. the plugin runs each command in its own Lightroom task through the SDK
-   (catalog write gates, `LrDevelopController`, export sessions) and posts the
-   answer to `POST /v1/plugin/result`;
+   (catalog write gates, `LrDevelopController`, export sessions), reports
+   progress of long commands to `POST /v1/plugin/progress` (stopping if the
+   answer says the job was cancelled) and posts the answer to
+   `POST /v1/plugin/result`. Commands that change photos accept a `dry_run`
+   parameter that only counts what they would change;
 4. if the hub is not running, the plugin retries every 1 to 5 seconds at
    negligible cost.
 

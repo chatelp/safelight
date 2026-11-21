@@ -11,12 +11,21 @@ from safelight.mcp_server import build_server
 pytestmark = pytest.mark.anyio
 
 
-async def test_server_lists_status_tool_as_read_only(safelight_home):
+async def test_server_lists_tools_with_annotations(safelight_home):
     async with Client(build_server(HubClient(safelight_home))) as client:
-        tools = (await client.list_tools()).tools
-        status_tool = next(tool for tool in tools if tool.name == "safelight_status")
-        assert status_tool.annotations is not None
-        assert status_tool.annotations.read_only_hint is True
+        tools = {tool.name: tool for tool in (await client.list_tools()).tools}
+        assert set(tools) == {"safelight_status", "safelight_job", "safelight_cancel_job"}
+        assert tools["safelight_status"].annotations.read_only_hint is True
+        assert tools["safelight_job"].annotations.read_only_hint is True
+        assert tools["safelight_cancel_job"].annotations.read_only_hint is False
+
+
+async def test_job_tool_reports_unknown_job(safelight_home):
+    async with Client(build_server(HubClient(safelight_home))) as client:
+        result = await client.call_tool("safelight_job", {"job_id": "nope"})
+        assert not result.is_error
+        assert result.structured_content["state"] == "failed"
+        assert result.structured_content["error"]["code"] == "UNKNOWN_JOB"
 
 
 async def test_status_starts_the_hub_and_reports_lightroom_missing(safelight_home):
