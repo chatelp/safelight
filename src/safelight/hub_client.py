@@ -9,13 +9,14 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .paths import hub_config_path, hub_log_path, safelight_home
-from .protocol import TOKEN_HEADER, ErrorCode
+from .protocol import CLIENT_HEADER, DEFAULT_WAIT_S, TOKEN_HEADER, ErrorCode, JobState
 
 
 class HubUnavailable(RuntimeError):
@@ -37,21 +38,40 @@ class HubConfig:
             return None
 
 
+def unavailable(message: str) -> dict[str, Any]:
+    return {
+        "job_id": None,
+        "state": JobState.FAILED,
+        "error": {"code": ErrorCode.HUB_UNAVAILABLE, "message": message},
+    }
+
+
 class HubClient:
-    def __init__(self, home: Path | None = None) -> None:
+    def __init__(self, home: Path | None = None, client_name: str = "cli") -> None:
         self.home = home or safelight_home()
+        self.client_name = client_name
 
     # -- low level -------------------------------------------------------------------
 
     def _request(
-        self, config: HubConfig, method: str, path: str, body: Any = None, timeout: float = 5.0
+        self,
+        config: HubConfig,
+        method: str,
+        path: str,
+        body: Any = None,
+        timeout: float = 5.0,
+        client: str | None = None,
     ) -> dict[str, Any]:
         data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
         request = urllib.request.Request(
             f"http://127.0.0.1:{config.port}{path}",
             data=data,
             method=method,
-            headers={TOKEN_HEADER: config.token, "Content-Type": "application/json"},
+            headers={
+                TOKEN_HEADER: config.token,
+                CLIENT_HEADER: client or self.client_name,
+                "Content-Type": "application/json",
+            },
         )
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -119,31 +139,70 @@ class HubClient:
             f"the Safelight hub did not become ready; see {hub_log_path(self.home)} for details"
         )
 
+    async def _call_hub(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        timeout: float = 5.0,
+        client: str | None = None,
+    ) -> dict[str, Any]:
+        """Make sure the hub runs, then send one request. Raises HubUnavailable."""
+        await self.status()
+        config = self._config()
+        if config is None:
+            raise HubUnavailable("hub.json disappeared")
+        return await asyncio.to_thread(self._request, config, method, path, body, timeout, client)
+
     # -- public async API ---------------------------------------------------------------
 
     async def status(self, *, start: bool = True, timeout: float = 8.0) -> dict[str, Any]:
         """Hub status, starting the hub first if needed. Raises HubUnavailable."""
         return await asyncio.to_thread(self._ensure_running_sync, start, timeout)
 
-    async def call(
-        self, command: str, params: dict[str, Any] | None = None, timeout_s: float = 30.0
+    async def run(
+        self,
+        command: str,
+        params: dict[str, Any] | None = None,
+        *,
+        wait_s: float = DEFAULT_WAIT_S,
+        confirm: str | None = None,
+        client: str | None = None,
     ) -> dict[str, Any]:
-        """Run a Lightroom command through the hub. Returns {success, result|error}."""
+        """Run a Lightroom command through the hub.
+
+        Returns the job response: `state` is succeeded, failed, cancelled, running (poll
+        with `job`) or confirmation_required. Never raises for hub problems.
+        """
+        body: dict[str, Any] = {"command": command, "params": params or {}, "wait_s": wait_s}
+        if confirm:
+            body["confirm"] = confirm
         try:
-            await self.status()
-            config = self._config()
-            if config is None:
-                raise HubUnavailable("hub.json disappeared")
-            return await asyncio.to_thread(
-                self._request,
-                config,
-                "POST",
-                "/v1/rpc",
-                {"command": command, "params": params or {}, "timeout_s": timeout_s},
-                timeout_s + 5.0,
-            )
+            return await self._call_hub("POST", "/v1/rpc", body, wait_s + 40.0, client)
         except HubUnavailable as exc:
-            return {
-                "success": False,
-                "error": {"code": ErrorCode.HUB_UNAVAILABLE, "message": str(exc)},
-            }
+            return unavailable(str(exc))
+
+    async def job(self, job_id: str, wait_s: float = 0.0) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"wait_s": wait_s})
+        path = f"/v1/jobs/{urllib.parse.quote(job_id)}?{query}"
+        try:
+            return await self._call_hub("GET", path, timeout=wait_s + 10.0)
+        except HubUnavailable as exc:
+            return unavailable(str(exc))
+
+    async def cancel(self, job_id: str) -> dict[str, Any]:
+        try:
+            return await self._call_hub("POST", f"/v1/jobs/{urllib.parse.quote(job_id)}/cancel")
+        except HubUnavailable as exc:
+            return unavailable(str(exc))
+
+    async def jobs(self) -> dict[str, Any]:
+        return await self._call_hub("GET", "/v1/jobs")
+
+    async def activity(self, after: int = 0) -> dict[str, Any]:
+        return await self._call_hub("GET", f"/v1/activity?after={int(after)}")
+
+    async def settings(self, changes: dict[str, Any] | None = None) -> dict[str, Any]:
+        if changes:
+            return await self._call_hub("PUT", "/v1/settings", changes)
+        return await self._call_hub("GET", "/v1/settings")

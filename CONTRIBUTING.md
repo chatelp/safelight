@@ -77,6 +77,19 @@ uv run safelight status                          # hub and Lightroom state
 uv run safelight bench -n 100                    # round-trip latency
 uv run safelight call inspect.app                # any plugin command, with JSON params
 uv run safelight call inspect.thumbnails '{"sizes": [512]}'
+uv run safelight call system.progress_test '{"steps": 20}' --wait 1   # returns a running job
+uv run safelight job <job_id> --wait 5                                 # follow it
+uv run safelight cancel <job_id>
+uv run safelight activity                         # what the hub has done
+uv run safelight settings --confirm-threshold 20 --read-only off
 ```
 
-The `inspect.*` commands are read-only.
+The `inspect.*` and `system.*` commands are read-only.
+
+## Working without Lightroom
+
+`uv run safelight fake-plugin` connects to the hub like the Lightroom plugin and
+answers a few commands (`system.ping`, `echo`, `fake.bulk_edit`,
+`fake.remove_photos`) with progress, cancellation and dry runs. Quit Lightroom
+first, or the two will share the work. The test suite uses the same fake
+(`safelight.devtools.fake_plugin`).

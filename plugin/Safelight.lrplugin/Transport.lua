@@ -53,9 +53,25 @@ local function setConnected(connected, reason)
     state.lastError = reason
 end
 
+-- What a command handler receives besides its params: a way to report progress.
+-- job.progress(done, total, message) returns true when the user asked to cancel.
+local function makeJob(config, command)
+    local job = { id = command.id }
+    function job.progress(done, total, message)
+        local reply, status = HubConnection.post(config, "/v1/plugin/progress", {
+            id = command.id,
+            done = done,
+            total = total,
+            message = message,
+        }, Protocol.RESULT_HTTP_TIMEOUT_S)
+        return status == 200 and type(reply) == "table" and reply.cancel == true
+    end
+    return job
+end
+
 local function runCommand(config, command)
     LrFunctionContext.postAsyncTaskWithContext("SafelightCommand", function()
-        local response = CommandRouter.dispatch(command)
+        local response = CommandRouter.dispatch(command, makeJob(config, command))
         state.commandsRun = state.commandsRun + 1
         local _, status, err = HubConnection.post(
             config, "/v1/plugin/result", response, Protocol.RESULT_HTTP_TIMEOUT_S
