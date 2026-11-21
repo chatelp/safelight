@@ -177,15 +177,16 @@ PNGs, and the masters are in `app/Design/masters/menubar-*.svg`.
 The glyph is the app icon's lamp, from top to bottom:
 
 - a short cord, 2 pt long;
-- the shade: 4 pt wide at the top, 9.6 pt at the rim, 4.2 pt tall;
+- the shade: 5.2 pt wide at the top, 14.8 pt at the rim, 4.2 pt tall, so
+  it is wide and flat like a lamp shade;
 - a 1.6 pt gap;
-- the cone of light: 4 pt wide at the top, and no wider than the shade's rim
-  at the bottom.
+- the cone of light: 6 pt wide at the top and 12.4 pt at the bottom, always
+  narrower than the shade's rim.
 
 These proportions keep it from reading as a fir tree. Two triangles stacked
-with no gap, the lower one wider, look like a tree at 18 pt. The cord, the gap
-and a cone no wider than the shade make it read as a lamp hanging from the
-ceiling.
+with no gap, the lower one wider, look like a tree at 18 pt. The cord, the gap,
+a wide shade and a cone narrower than the shade make it read as a lamp hanging
+from the ceiling.
 
 The silhouette never changes size. The amount of ink shows the state:
 
