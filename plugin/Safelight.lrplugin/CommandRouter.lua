@@ -1,20 +1,23 @@
 -- Maps command names received from the hub to handler functions.
--- The upstream catalog, develop, mask and export actions are wired back in roadmap lot L3,
--- once their bugs are fixed; until then only system and read-only inspection commands exist.
+-- Commands are named <area>.<action>. Commands that change photos accept dry_run = true,
+-- which only reports how many photos would change; the hub uses it before asking the
+-- user to confirm large changes (see src/safelight/policy.py).
 local LrTasks = import "LrTasks"
 
+local Catalog = require "Catalog"
+local Develop = require "Develop"
+local Export = require "Export"
 local Inspect = require "Inspect"
+local Masks = require "Masks"
+local Metadata = require "Metadata"
 local Logger = require "Logger"
+local Result = require "Result"
 local Version = require "Version"
 
 local CommandRouter = {
     handlers = {},
 }
 
--- A handler that stops because the user cancelled returns CommandRouter.cancelled(message).
-function CommandRouter.cancelled(message)
-    return { __safelightCancelled = true, message = message or "Cancelled" }
-end
 
 -- Handlers called without a hub job (for example from a menu) get a job that never cancels.
 local noJob = {
@@ -41,7 +44,7 @@ register("system.progress_test", function(params, job)
     local delay = math.max(0, math.min(tonumber(params.delay_s) or 0.5, 5))
     for step = 1, steps do
         if job.progress(step - 1, steps, "Step " .. step .. " of " .. steps) then
-            return CommandRouter.cancelled("Stopped before step " .. step .. " of " .. steps)
+            return Result.cancelled("Stopped before step " .. step .. " of " .. steps)
         end
         LrTasks.sleep(delay)
     end
@@ -59,6 +62,53 @@ register("system.list_commands", function(_)
 end)
 
 register("inspect.app", Inspect.app)
+register("inspect.develop_ranges", Develop.captureRanges)
+
+-- Catalog and photos.
+register("catalog.info", Catalog.info)
+register("photos.get", Catalog.getPhotos)
+register("photos.search", Catalog.search)
+register("photos.preview", Catalog.preview)
+register("photos.rotate", Catalog.rotate)
+register("photos.create_virtual_copies", Catalog.createVirtualCopies)
+
+-- Collections.
+register("collections.list", Catalog.listCollections)
+register("collections.photos", Catalog.collectionPhotos)
+register("collections.create", Catalog.createCollection)
+register("collections.add", Catalog.addToCollection)
+register("collections.remove_photos", Catalog.removeFromCollection)
+register("collections.delete", Catalog.deleteCollection)
+
+-- Metadata and keywords.
+register("metadata.set", Metadata.set)
+register("keywords.list", Metadata.listKeywords)
+register("keywords.add", Metadata.addKeywords)
+register("keywords.remove", Metadata.removeKeywords)
+
+-- Develop.
+register("develop.get", Develop.get)
+register("develop.apply", Develop.apply)
+register("develop.copy", Develop.copy)
+register("develop.auto_tone", Develop.autoTone)
+register("develop.auto_white_balance", Develop.autoWhiteBalance)
+register("develop.reset", Develop.reset)
+register("develop.apply_preset", Develop.applyPreset)
+register("presets.list", Develop.listPresets)
+register("snapshots.list", Develop.listSnapshots)
+register("snapshots.create", Develop.createSnapshot)
+register("snapshots.apply", Develop.applySnapshot)
+register("snapshots.delete", Develop.deleteSnapshot)
+
+-- Masks.
+register("masks.list", Masks.list)
+register("masks.adjust", Masks.adjust)
+register("masks.create", Masks.create)
+register("masks.delete", Masks.delete)
+register("masks.invert", Masks.invert)
+
+-- Export.
+register("export.photos", Export.photos)
 register("inspect.develop_settings", Inspect.developSettings)
 register("inspect.raw_metadata", Inspect.rawMetadata)
 register("inspect.thumbnails", Inspect.thumbnails)
@@ -96,7 +146,7 @@ function CommandRouter.dispatch(request, job)
         }
     end
 
-    if type(result) == "table" and result.__safelightCancelled then
+    if Result.isCancelled(result) then
         return {
             id = requestId,
             success = false,

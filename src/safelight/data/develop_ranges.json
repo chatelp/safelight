@@ -1,0 +1,537 @@
+{
+ "source": "bootstrap from lightroom-classic-mcp (upstream) tables; replace with `scripts/develop_ranges.py capture` on a live Lightroom",
+ "common": {
+  "Blacks": [
+   -100.0,
+   100.0
+  ],
+  "Blacks2012": [
+   -100.0,
+   100.0
+  ],
+  "BlueHue": [
+   -100.0,
+   100.0
+  ],
+  "BlueSaturation": [
+   -100.0,
+   100.0
+  ],
+  "Clarity": [
+   -100.0,
+   100.0
+  ],
+  "Clarity2012": [
+   -100.0,
+   100.0
+  ],
+  "ColorGradeBlending": [
+   0.0,
+   100.0
+  ],
+  "ColorGradeGlobalHue": [
+   0.0,
+   360.0
+  ],
+  "ColorGradeGlobalLum": [
+   -100.0,
+   100.0
+  ],
+  "ColorGradeGlobalSat": [
+   0.0,
+   100.0
+  ],
+  "ColorGradeHighlightHue": [
+   0.0,
+   360.0
+  ],
+  "ColorGradeHighlightLum": [
+   -100.0,
+   100.0
+  ],
+  "ColorGradeHighlightSat": [
+   0.0,
+   100.0
+  ],
+  "ColorGradeMidtoneHue": [
+   0.0,
+   360.0
+  ],
+  "ColorGradeMidtoneLum": [
+   -100.0,
+   100.0
+  ],
+  "ColorGradeMidtoneSat": [
+   0.0,
+   100.0
+  ],
+  "ColorGradeShadowHue": [
+   0.0,
+   360.0
+  ],
+  "ColorGradeShadowLum": [
+   -100.0,
+   100.0
+  ],
+  "ColorGradeShadowSat": [
+   0.0,
+   100.0
+  ],
+  "ColorNoiseReduction": [
+   0.0,
+   100.0
+  ],
+  "ColorNoiseReductionDetail": [
+   0.0,
+   100.0
+  ],
+  "ColorNoiseReductionSmoothness": [
+   0.0,
+   100.0
+  ],
+  "Contrast": [
+   -100.0,
+   100.0
+  ],
+  "Contrast2012": [
+   -100.0,
+   100.0
+  ],
+  "CropAngle": [
+   -45.0,
+   45.0
+  ],
+  "CropBottom": [
+   0.0,
+   1.0
+  ],
+  "CropLeft": [
+   0.0,
+   1.0
+  ],
+  "CropRight": [
+   0.0,
+   1.0
+  ],
+  "CropTop": [
+   0.0,
+   1.0
+  ],
+  "DefringeGreenAmount": [
+   0.0,
+   20.0
+  ],
+  "DefringeGreenHueHi": [
+   30.0,
+   100.0
+  ],
+  "DefringeGreenHueLo": [
+   0.0,
+   60.0
+  ],
+  "DefringePurpleAmount": [
+   0.0,
+   20.0
+  ],
+  "DefringePurpleHueHi": [
+   40.0,
+   100.0
+  ],
+  "DefringePurpleHueLo": [
+   30.0,
+   70.0
+  ],
+  "Dehaze": [
+   -100.0,
+   100.0
+  ],
+  "Exposure": [
+   -5.0,
+   5.0
+  ],
+  "Exposure2012": [
+   -5.0,
+   5.0
+  ],
+  "GrainAmount": [
+   0.0,
+   100.0
+  ],
+  "GrainFrequency": [
+   0.0,
+   100.0
+  ],
+  "GrainSize": [
+   0.0,
+   100.0
+  ],
+  "GrayMixerAqua": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerBlue": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerGreen": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerMagenta": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerOrange": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerPurple": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerRed": [
+   -100.0,
+   100.0
+  ],
+  "GrayMixerYellow": [
+   -100.0,
+   100.0
+  ],
+  "GreenHue": [
+   -100.0,
+   100.0
+  ],
+  "GreenSaturation": [
+   -100.0,
+   100.0
+  ],
+  "Highlights": [
+   -100.0,
+   100.0
+  ],
+  "Highlights2012": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentAqua": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentBlue": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentGreen": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentMagenta": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentOrange": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentPurple": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentRed": [
+   -100.0,
+   100.0
+  ],
+  "HueAdjustmentYellow": [
+   -100.0,
+   100.0
+  ],
+  "LensBlurAmount": [
+   0.0,
+   100.0
+  ],
+  "LensBlurCatEye": [
+   0.0,
+   100.0
+  ],
+  "LensBlurFocalRange": [
+   0.0,
+   100.0
+  ],
+  "LensBlurHighlightsBoost": [
+   0.0,
+   100.0
+  ],
+  "LensManualDistortionAmount": [
+   -100.0,
+   100.0
+  ],
+  "LensProfileDistortionScale": [
+   0.0,
+   200.0
+  ],
+  "LensProfileVignettingScale": [
+   0.0,
+   200.0
+  ],
+  "LuminanceAdjustmentAqua": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentBlue": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentGreen": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentMagenta": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentOrange": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentPurple": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentRed": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceAdjustmentYellow": [
+   -100.0,
+   100.0
+  ],
+  "LuminanceNoiseReductionContrast": [
+   0.0,
+   100.0
+  ],
+  "LuminanceNoiseReductionDetail": [
+   0.0,
+   100.0
+  ],
+  "LuminanceSmoothing": [
+   0.0,
+   100.0
+  ],
+  "ParametricDarks": [
+   -100.0,
+   100.0
+  ],
+  "ParametricHighlightSplit": [
+   5.0,
+   95.0
+  ],
+  "ParametricHighlights": [
+   -100.0,
+   100.0
+  ],
+  "ParametricLights": [
+   -100.0,
+   100.0
+  ],
+  "ParametricMidtoneSplit": [
+   5.0,
+   95.0
+  ],
+  "ParametricShadowSplit": [
+   5.0,
+   95.0
+  ],
+  "ParametricShadows": [
+   -100.0,
+   100.0
+  ],
+  "PerspectiveAspect": [
+   -100.0,
+   100.0
+  ],
+  "PerspectiveHorizontal": [
+   -100.0,
+   100.0
+  ],
+  "PerspectiveRotate": [
+   -10.0,
+   10.0
+  ],
+  "PerspectiveScale": [
+   50.0,
+   150.0
+  ],
+  "PerspectiveUpright": [
+   0.0,
+   5.0
+  ],
+  "PerspectiveVertical": [
+   -100.0,
+   100.0
+  ],
+  "PerspectiveX": [
+   -100.0,
+   100.0
+  ],
+  "PerspectiveY": [
+   -100.0,
+   100.0
+  ],
+  "PostCropVignetteAmount": [
+   -100.0,
+   100.0
+  ],
+  "PostCropVignetteFeather": [
+   0.0,
+   100.0
+  ],
+  "PostCropVignetteHighlightContrast": [
+   0.0,
+   100.0
+  ],
+  "PostCropVignetteMidpoint": [
+   0.0,
+   100.0
+  ],
+  "PostCropVignetteRoundness": [
+   -100.0,
+   100.0
+  ],
+  "RedHue": [
+   -100.0,
+   100.0
+  ],
+  "RedSaturation": [
+   -100.0,
+   100.0
+  ],
+  "Saturation": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentAqua": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentBlue": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentGreen": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentMagenta": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentOrange": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentPurple": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentRed": [
+   -100.0,
+   100.0
+  ],
+  "SaturationAdjustmentYellow": [
+   -100.0,
+   100.0
+  ],
+  "ShadowTint": [
+   -100.0,
+   100.0
+  ],
+  "Shadows": [
+   -100.0,
+   100.0
+  ],
+  "Shadows2012": [
+   -100.0,
+   100.0
+  ],
+  "SharpenDetail": [
+   0.0,
+   100.0
+  ],
+  "SharpenEdgeMasking": [
+   0.0,
+   100.0
+  ],
+  "SharpenRadius": [
+   0.5,
+   3.0
+  ],
+  "Sharpness": [
+   0.0,
+   150.0
+  ],
+  "SplitToningBalance": [
+   -100.0,
+   100.0
+  ],
+  "SplitToningHighlightHue": [
+   0.0,
+   360.0
+  ],
+  "SplitToningHighlightSaturation": [
+   0.0,
+   100.0
+  ],
+  "SplitToningShadowHue": [
+   0.0,
+   360.0
+  ],
+  "SplitToningShadowSaturation": [
+   0.0,
+   100.0
+  ],
+  "Texture": [
+   -100.0,
+   100.0
+  ],
+  "Vibrance": [
+   -100.0,
+   100.0
+  ],
+  "VignetteAmount": [
+   -100.0,
+   100.0
+  ],
+  "VignetteMidpoint": [
+   0.0,
+   100.0
+  ],
+  "Whites": [
+   -100.0,
+   100.0
+  ],
+  "Whites2012": [
+   -100.0,
+   100.0
+  ]
+ },
+ "raw": {
+  "Temperature": [
+   2000.0,
+   50000.0
+  ],
+  "Tint": [
+   -150.0,
+   150.0
+  ]
+ },
+ "non_raw": {
+  "Temperature": [
+   -100.0,
+   100.0
+  ],
+  "Tint": [
+   -100.0,
+   100.0
+  ]
+ }
+}
