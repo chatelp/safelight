@@ -201,9 +201,11 @@ Checked with the read-only `inspect.*` commands of the plugin on 2026-11-21.
   mask with its local sliders (`LocalExposure2012`, `LocalTexture`,
   `LocalTemperature`, `LocalCurveRefineSaturation`, …), its components
   (`CorrectionMasks` with type, subtype, inverted flag, reference point) and
-  stable IDs. Local adjustments can therefore be **read for any photo without
-  the Develop UI**. Writing them back this way is *verify* (lot L3, on a test
-  photo).
+  stable IDs. Local adjustments can be **read and written for any photo without
+  the Develop UI** (verified in lot L3: writing the modified table back with
+  `applyDevelopSettings` updates the mask). Stored values are the displayed
+  value divided by 4 for exposure (in EV) and by 100 for the other sliders;
+  checked against the Lightroom UI.
 - **Masks through the Develop UI path:** `getAllMasks` returns each mask's name,
   ID and tools (type `aiSelection`, subtypes `subject`, `object`, …); the IDs
   match `CorrectionID` / `MaskID` in the develop settings.
@@ -215,3 +217,33 @@ Checked with the read-only `inspect.*` commands of the plugin on 2026-11-21.
   `orientation`). Keys without a value (for example `gps`) are omitted.
 - **`selectTool`** accepts only the documented values; the upstream names
   (`brush`, `graduated-filter`, …) are rejected.
+
+Found while building the plugin commands (lot L3):
+
+- **Process Version 2012 keys:** on current photos (`ProcessVersion` `15.4` for
+  Process Version 6) the basic sliders live under `Exposure2012`,
+  `Contrast2012`, `Highlights2012`, `Shadows2012`, `Whites2012`, `Blacks2012`,
+  `Clarity2012`. The plain names only apply to Process Versions 1 and 2
+  (`5.0`, `5.7`). Safelight maps plain names automatically.
+- **Slider ranges** captured with `getRange` on a raw photo: for example
+  Temperature 1500–50000 K (not 2000), Tint −150…150, Exposure −5…5. Stored in
+  `src/safelight/data/develop_ranges.json`; non-raw Temperature and Tint
+  (−100…100) still come from the documentation.
+- **Snapshots** from `getDevelopSnapshots` carry `snapshotID` and `name` (the
+  upstream code read a non-existent `snapshotName`).
+- **Labels:** `colorNameForLabel` is `gray` (not the documented `none`) for
+  photos without a label.
+- **Keywords:** `createKeyword` returns an object that becomes usable once its
+  write gate has finished; tagging photos must happen in a second gate.
+- **Virtual copies:** `createVirtualCopies` copies the current selection once;
+  select the photos first.
+- **Masks through the Develop UI:** `createNewMask("aiSelection", "subject")`
+  takes about 2–4 s (AI detection); `deleteMask` and `invertMask` need the
+  Masking tool open (`selectTool("masking")`).
+- **Auto Tone** for current Process Versions goes through
+  `LrDevelopController.setAutoTone()` (the catalog only knows legacy auto
+  flags); Auto White Balance works through the catalog (`WhiteBalance = "Auto"`
+  with `optFlattenAutoNow`).
+- **Previews:** `requestJpegThumbnail` treats the size as a minimum (512
+  returned 640 × 426).
+- **Search:** `findPhotos` over 67 922 matching photos answered in 285 ms.
