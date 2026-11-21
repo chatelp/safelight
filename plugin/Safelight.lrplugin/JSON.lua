@@ -146,6 +146,14 @@ function JSON.decode(input)
                     end
                     local code = tonumber(hex, 16)
                     index = index + 4
+                    -- A UTF-16 surrogate pair (emoji and other characters beyond U+FFFF).
+                    if code >= 0xD800 and code <= 0xDBFF and input:sub(index, index + 1) == "\\u" then
+                        local low = tonumber(input:sub(index + 2, index + 5), 16)
+                        if low and low >= 0xDC00 and low <= 0xDFFF then
+                            code = 0x10000 + (code - 0xD800) * 1024 + (low - 0xDC00)
+                            index = index + 6
+                        end
+                    end
                     if code < 128 then
                         out[#out + 1] = string.char(code)
                     elseif code < 2048 then
@@ -157,6 +165,12 @@ function JSON.decode(input)
                         local b2 = (math.floor(code / 64) % 64) + 128
                         local b3 = (code % 64) + 128
                         out[#out + 1] = string.char(b1, b2, b3)
+                    elseif code < 0x110000 then
+                        local b1 = math.floor(code / 262144) + 240
+                        local b2 = (math.floor(code / 4096) % 64) + 128
+                        local b3 = (math.floor(code / 64) % 64) + 128
+                        local b4 = (code % 64) + 128
+                        out[#out + 1] = string.char(b1, b2, b3, b4)
                     else
                         out[#out + 1] = "?"
                     end

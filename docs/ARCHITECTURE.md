@@ -115,6 +115,9 @@ plugin acts as a **client of the hub**:
 4. if the hub is not running, the plugin retries every 1 to 5 seconds at
    negligible cost.
 
+The commands the plugin understands are listed in
+[PLUGIN_COMMANDS.md](PLUGIN_COMMANDS.md).
+
 Measured on Lightroom Classic 16.0.1 (roadmap lot L1): a command round trip
 takes 1.7 ms median (2.1 ms at the 95th percentile); the plugin connects about
 8 s after Lightroom loads it and reconnects within 1 to 2.5 s after a hub

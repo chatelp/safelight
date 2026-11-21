@@ -7,7 +7,8 @@
 - destructive commands always need confirmation.
 
 Unknown commands are treated as mutating, so a new command is never less protected than
-an old one by accident.
+an old one by accident. tests/test_policy.py checks that every command the plugin
+registers is listed here.
 """
 
 from __future__ import annotations
@@ -23,16 +24,59 @@ class CommandPolicy:
 
 
 READ_ONLY = CommandPolicy(mutating=False)
-
-DEFAULT_POLICIES: dict[str, CommandPolicy] = {
-    # Development commands understood by safelight.devtools.fake_plugin.
-    "fake.bulk_edit": CommandPolicy(supports_dry_run=True),
-    "fake.remove_photos": CommandPolicy(destructive=True, supports_dry_run=True),
-    # Lightroom commands are added here as the plugin gains them (roadmap lot L3).
-}
+BULK = CommandPolicy(supports_dry_run=True)
+SINGLE = CommandPolicy()
+DESTRUCTIVE = CommandPolicy(destructive=True, supports_dry_run=True)
 
 READ_ONLY_PREFIXES = ("system.", "inspect.")
-READ_ONLY_COMMANDS = {"echo"}
+READ_ONLY_COMMANDS = frozenset(
+    {
+        "echo",
+        "catalog.info",
+        "photos.get",
+        "photos.search",
+        "photos.preview",
+        "collections.list",
+        "collections.photos",
+        "keywords.list",
+        "develop.get",
+        "presets.list",
+        "snapshots.list",
+        "masks.list",
+    }
+)
+
+DEFAULT_POLICIES: dict[str, CommandPolicy] = {
+    # Changes to one or many photos: simulated first, confirmed past the threshold.
+    "photos.rotate": BULK,
+    "photos.create_virtual_copies": BULK,
+    "collections.add": BULK,
+    "collections.remove_photos": BULK,
+    "metadata.set": BULK,
+    "keywords.add": BULK,
+    "keywords.remove": BULK,
+    "develop.apply": BULK,
+    "develop.copy": BULK,
+    "develop.auto_tone": BULK,
+    "develop.auto_white_balance": BULK,
+    "develop.reset": BULK,
+    "develop.apply_preset": BULK,
+    "snapshots.create": BULK,
+    "masks.adjust": BULK,
+    "masks.create": BULK,
+    "masks.invert": BULK,
+    "export.photos": BULK,
+    # Small changes without a dry run.
+    "collections.create": SINGLE,
+    "snapshots.apply": SINGLE,
+    # Hard to undo: always confirmed.
+    "collections.delete": DESTRUCTIVE,
+    "snapshots.delete": DESTRUCTIVE,
+    "masks.delete": DESTRUCTIVE,
+    # Development commands understood by safelight.devtools.fake_plugin.
+    "fake.bulk_edit": BULK,
+    "fake.remove_photos": DESTRUCTIVE,
+}
 
 
 def policy_for(command: str, policies: dict[str, CommandPolicy] | None = None) -> CommandPolicy:
@@ -42,3 +86,11 @@ def policy_for(command: str, policies: dict[str, CommandPolicy] | None = None) -
     if command.startswith(READ_ONLY_PREFIXES) or command in READ_ONLY_COMMANDS:
         return READ_ONLY
     return CommandPolicy()
+
+
+def is_classified(command: str) -> bool:
+    return (
+        command in DEFAULT_POLICIES
+        or command in READ_ONLY_COMMANDS
+        or command.startswith(READ_ONLY_PREFIXES)
+    )
