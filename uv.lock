@@ -933,6 +933,7 @@ name = "safelight"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
+    { name = "pillow" },
     { name = "pydantic" },
     { name = "starlette" },
     { name = "uvicorn" },
@@ -948,6 +949,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mcp", specifier = ">=2.3,<3" },
+    { name = "pillow", specifier = ">=11" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "starlette", specifier = ">=0.40" },
     { name = "uvicorn", specifier = ">=0.30" },
