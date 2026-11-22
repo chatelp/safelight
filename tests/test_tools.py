@@ -50,6 +50,7 @@ EXPECTED_TOOLS = {
     "search_photos",
     "preview_photo",
     "contact_sheet",
+    "analyze_photos",
     "get_develop_settings",
     "edit_develop",
     "copy_develop_settings",
@@ -80,6 +81,7 @@ async def test_tool_list_and_read_only_annotations(safelight_home):
         "search_photos",
         "preview_photo",
         "contact_sheet",
+        "analyze_photos",
         "get_develop_settings",
         "list_catalog_items",
     }
@@ -206,3 +208,32 @@ async def test_falls_back_to_a_token_when_the_client_cannot_be_asked(safelight_h
     ):
         result = (await mcp.call_tool("set_metadata", {"label": "red"})).structured_content
     assert result["state"] == "confirmation_required"
+
+
+async def test_analyze_photos_finds_the_burst_and_the_blurred_photo(safelight_home):
+    ids = [f"FAKE-{n:04d}" for n in range(1, 9)]
+    async with lightroom(safelight_home), Client(build_server(HubClient(safelight_home))) as mcp:
+        result = await mcp.call_tool("analyze_photos", {"photo_ids": ids})
+    report = result.structured_content
+    assert not result.is_error, result.content
+    assert report["summary"]["photos_analyzed"] == 8
+    assert report["groups"] == [
+        {
+            "kind": "burst",
+            "photo_ids": ["FAKE-0002", "FAKE-0003"],
+            "best_photo_id": "FAKE-0003",
+            "why_best": "sharpest frame of the group",
+        }
+    ]
+    flagged = {p["photo_id"]: p["issues"] for p in report["photos_with_issues"]}
+    assert any("blurred" in issue for issue in flagged["FAKE-0005"])
+
+
+async def test_search_filters_on_focal_length_after_the_search(safelight_home):
+    async with lightroom(safelight_home), Client(build_server(HubClient(safelight_home))) as mcp:
+        result = await mcp.call_tool(
+            "search_photos", {"filters": {"rating_min": 0, "focal_length_min_mm": 50}}
+        )
+    found = result.structured_content
+    assert found["total"] == 4
+    assert all(p["focal_length_mm"] >= 50 for p in found["photos"])

@@ -49,6 +49,16 @@ class PhotoFilters(BaseModel):
     edited: bool | None = Field(default=None, description="True for photos with develop changes")
     cropped: bool | None = None
     orientation: Literal["portrait", "landscape", "square"] | None = None
+    # Lightroom's search cannot filter on these; Safelight checks them on the results,
+    # which is slower on very large result sets.
+    focal_length_min_mm: float | None = Field(default=None, ge=0)
+    focal_length_max_mm: float | None = Field(default=None, ge=0)
+    aperture_min: float | None = Field(
+        default=None, ge=0, description="Smallest f-number, e.g. 1.4"
+    )
+    aperture_max: float | None = Field(default=None, ge=0, description="Largest f-number, e.g. 4")
+    shutter_min_s: float | None = Field(default=None, ge=0, description="Exposure time in seconds")
+    shutter_max_s: float | None = Field(default=None, ge=0, description="Exposure time in seconds")
 
 
 def _criterion(criteria: str, operation: str, value: Any, **extra: Any) -> dict[str, Any]:
@@ -128,3 +138,34 @@ def build_search(filters: PhotoFilters) -> dict[str, Any] | None:
     # JSON cannot express Lua's mixed tables ({combine = ..., [1] = ..., [2] = ...}), so
     # combined searches travel as {"combine": ..., "items": [...]}; the plugin converts them.
     return {"combine": "intersect", "items": parts}
+
+
+POST_FILTERS = (
+    ("focal_length_min_mm", "focal_length_mm", ">="),
+    ("focal_length_max_mm", "focal_length_mm", "<="),
+    ("aperture_min", "aperture", ">="),
+    ("aperture_max", "aperture", "<="),
+    ("shutter_min_s", "shutter_s", ">="),
+    ("shutter_max_s", "shutter_s", "<="),
+)
+
+
+def has_post_filters(filters: PhotoFilters) -> bool:
+    return any(getattr(filters, name) is not None for name, _, _ in POST_FILTERS)
+
+
+def matches_post_filters(photo: dict[str, Any], filters: PhotoFilters) -> bool:
+    """Filters Lightroom's search cannot apply, checked on a photo description."""
+    for name, key, operation in POST_FILTERS:
+        wanted = getattr(filters, name)
+        if wanted is None:
+            continue
+        value = photo.get(key)
+        if not isinstance(value, int | float):
+            return False
+        # Small tolerance: Lightroom reports 1/200 s as 0.0050000006 and f/4 as 4.0.
+        if operation == ">=" and value < wanted * (1 - 1e-6):
+            return False
+        if operation == "<=" and value > wanted * (1 + 1e-6):
+            return False
+    return True
