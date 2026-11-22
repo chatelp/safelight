@@ -11,10 +11,21 @@ import base64
 import io
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFilter
 
 from .fake_plugin import CommandError, Handler, Progress
 
+# Photos 2 and 3 are a burst: 1 s apart, same scene (3 is the sharper frame).
+CAPTURE_TIMES = [
+    "2026-11-20T10:00:00+01:00",
+    "2026-11-20T10:00:30+01:00",
+    "2026-11-20T10:00:31+01:00",
+    "2026-11-20T10:01:30+01:00",
+    "2026-11-20T10:02:00+01:00",
+    "2026-11-20T10:02:30+01:00",
+    "2026-11-20T10:03:00+01:00",
+    "2026-11-20T10:03:30+01:00",
+]
 COLORS = [(200, 80, 60), (60, 140, 200), (90, 170, 90), (220, 190, 60), (150, 90, 190)]
 
 
@@ -35,6 +46,10 @@ class FakeCatalog:
                 "settings": {"Exposure2012": 0.0, "Contrast2012": 0, "Temperature": 5500},
                 "masks": [],
                 "snapshots": [],
+                "captured_at": CAPTURE_TIMES[index % len(CAPTURE_TIMES)],
+                "camera": "ILCE-7M3",
+                "focal_length_mm": [24, 35, 35, 50, 70, 85, 24, 135][index % 8],
+                "aperture": [1.8, 2.8, 2.8, 4.0, 5.6, 1.4, 8.0, 2.0][index % 8],
             }
         self.selected = list(self.photos)[:2]
         self.collections: list[dict[str, Any]] = [
@@ -56,7 +71,19 @@ class FakeCatalog:
 
     @staticmethod
     def _summary(photo: dict[str, Any]) -> dict[str, Any]:
-        keys = ("uuid", "file_name", "format", "rating", "pick", "label", "title")
+        keys = (
+            "uuid",
+            "file_name",
+            "format",
+            "rating",
+            "pick",
+            "label",
+            "title",
+            "captured_at",
+            "camera",
+            "focal_length_mm",
+            "aperture",
+        )
         out = {key: photo[key] for key in keys}
         out["keywords"] = ", ".join(photo["keywords"]) or None
         return out
@@ -93,9 +120,21 @@ class FakeCatalog:
     async def preview(self, params: dict[str, Any], _: Progress) -> Any:
         photo = self._resolve(params)[0]
         size = int(params.get("size", 256))
-        color = COLORS[int(photo["uuid"][-1]) % len(COLORS)]
+        number = int(photo["uuid"][-4:])
+        scene = 2 if number == 3 else number  # photo 3 is the same scene as photo 2
+        image = Image.new("RGB", (size, size * 2 // 3), COLORS[scene % len(COLORS)])
+        draw = ImageDraw.Draw(image)
+        height = size * 2 // 3
+        for step in range(scene + 1):  # a different pattern of bars per scene
+            x = (step * 53 + scene * 29) % size
+            top = (scene * 41 + step * 13) % (height // 2)
+            draw.rectangle((x, top, x + size // 16, top + height // 3), fill=(20, 20, 20))
+        horizon = height // 3 + (scene * 23) % (height // 2)
+        draw.line((0, horizon, size, horizon), fill=(240, 240, 240), width=3)
+        if number in (2, 5):  # photo 2: slightly soft burst frame; photo 5: blurred
+            image = image.filter(ImageFilter.GaussianBlur(1 if number == 2 else 6))
         buffer = io.BytesIO()
-        Image.new("RGB", (size, size * 2 // 3), color).save(buffer, format="JPEG")
+        image.save(buffer, format="JPEG")
         data = buffer.getvalue()
         return {"uuid": photo["uuid"], "bytes": len(data), "data": base64.b64encode(data).decode()}
 

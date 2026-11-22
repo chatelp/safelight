@@ -16,9 +16,10 @@ photos selected in Lightroom (`scope: "selected"`, the default) or the active ph
 | `safelight_job` | read-only | Follow a long job (state, progress, result). |
 | `safelight_cancel_job` | change | Stop a job at its next step. |
 | `get_photos` | read-only | Describe photos (file, date, rating, flag, label, camera, lens, exposure, GPS, title, caption, keywords). |
-| `search_photos` | read-only | Find photos in the whole catalog with simple filters: text, keywords, title, caption, file name, folder, collection, camera, lens, rating range, flag, label, capture dates or last N days, ISO range, format, GPS, edited, cropped, orientation. |
+| `search_photos` | read-only | Find photos in the whole catalog with simple filters: text, keywords, title, caption, file name, folder, collection, camera, lens, rating range, flag, label, capture dates or last N days, ISO range, format, GPS, edited, cropped, orientation; plus focal length, aperture and shutter speed ranges, checked on the results (up to 5,000 photos scanned). |
 | `preview_photo` | read-only | The photo as Lightroom renders it now, as an image. |
 | `contact_sheet` | read-only | Up to 48 photos in one numbered image with stars, flags and labels, plus a legend mapping numbers to ids. For culling and comparing. |
+| `analyze_photos` | read-only | Help cull a shoot: groups bursts and near-duplicates and picks the best frame of each (sharpest, well exposed, flagged or rated), and lists photos that look blurred, have blown highlights or crushed shadows, are tilted (with the angle), or keep a thin empty border left by a perspective correction or HDR merge. Frames stacked under another photo (HDR brackets, panorama sources) are left out unless asked. Lightroom's search already returns only the top of each stack. Works on Lightroom's previews; heuristics to review, not verdicts. |
 | `get_develop_settings` | read-only | Develop settings, masks with their adjustments, and snapshots of a photo. |
 | `edit_develop` | change | Set develop sliders on one or many photos, absolute or relative; out-of-range values are limited and reported. |
 | `copy_develop_settings` | change | Sync settings from one photo to others (everything but crop, masks and red eye, or chosen settings). |

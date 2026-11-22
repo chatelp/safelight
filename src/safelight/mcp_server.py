@@ -19,10 +19,11 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from . import __version__
+from .analysis import findings, groups, measure, summarize, top_of_stacks
 from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
-from .search import PhotoFilters, build_search
+from .search import PhotoFilters, build_search, has_post_filters, matches_post_filters
 
 INSTRUCTIONS = """\
 Safelight lets you work in the user's Adobe Lightroom Classic catalog.
@@ -313,6 +314,81 @@ async def collect_status(client: HubClient, client_name: str | None = None) -> S
     )
 
 
+MAX_SCANNED = 5000  # photos scanned when filtering results on fields Lightroom can't search
+
+
+async def list_photos(
+    runner: Runner,
+    ctx: Context | None,
+    *,
+    photo_ids: list[str] | None = None,
+    scope: str = "selected",
+    filters: PhotoFilters | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    sort: str = "captureTime",
+    ascending: bool = False,
+) -> tuple[list[dict[str, Any]], int]:
+    """Photos from ids, the selection or a search; returns (page, total)."""
+    if filters is None:
+        listing = await runner.read(
+            ctx, "photos.get", {**_targets(photo_ids, scope), "limit": limit, "offset": offset}
+        )
+        return listing.get("photos") or [], int(listing.get("total") or 0)
+    search = build_search(filters)
+    if search is None and not has_post_filters(filters):
+        raise ToolError("Give at least one filter.")
+    if search is None:
+        raise ToolError("Add at least one filter Lightroom can search (for example a date).")
+    base = {"search": search, "sort": sort, "ascending": ascending}
+    if not has_post_filters(filters):
+        listing = await runner.read(
+            ctx, "photos.search", {**base, "limit": limit, "offset": offset}
+        )
+        return listing.get("photos") or [], int(listing.get("total") or 0)
+    matched: list[dict[str, Any]] = []
+    scanned, page_start = 0, 0
+    while scanned < MAX_SCANNED:
+        page = await runner.read(ctx, "photos.search", {**base, "limit": 500, "offset": page_start})
+        photos = page.get("photos") or []
+        matched.extend(p for p in photos if matches_post_filters(p, filters))
+        scanned += len(photos)
+        page_start += len(photos)
+        if len(photos) < 500 or page_start >= int(page.get("total") or 0):
+            break
+    return matched[offset : offset + limit], len(matched)
+
+
+async def fetch_previews(
+    client: HubClient,
+    ctx: Context | None,
+    photos: list[dict[str, Any]],
+    size: int,
+    progress: Any = None,
+) -> list[bytes | None]:
+    """Lightroom previews of many photos, six at a time."""
+    semaphore = asyncio.Semaphore(6)
+    done = 0
+
+    async def fetch(photo: dict[str, Any]) -> bytes | None:
+        nonlocal done
+        async with semaphore:
+            reply = await client.run(
+                "photos.preview",
+                {"uuids": [photo["uuid"]], "size": size},
+                wait_s=30,
+                client=_client_name(ctx),
+            )
+        done += 1
+        if progress is not None:
+            await progress(done, len(photos))
+        if reply.get("state") != JobState.SUCCEEDED:
+            return None
+        return base64.b64decode(reply["result"]["data"])
+
+    return list(await asyncio.gather(*(fetch(photo) for photo in photos)))
+
+
 # -- server -------------------------------------------------------------------------------
 
 
@@ -378,19 +454,20 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         """Find photos in the whole catalog. Photos must match every filter given.
 
         Use exact Lightroom names for camera and lens (look them up with get_photos on a
-        known photo). Returns `total` and one page of photo descriptions.
+        known photo). Focal length, aperture and shutter speed are checked on the results,
+        so combine them with a filter Lightroom can search (dates, camera, rating...).
+        Returns `total` and one page of photo descriptions.
         """
-        search = build_search(filters)
-        if search is None:
-            raise ToolError("Give at least one filter.")
-        params = {
-            "search": search,
-            "sort": sort,
-            "ascending": not newest_first,
-            "limit": limit,
-            "offset": offset,
-        }
-        return await runner.read(ctx, "photos.search", params)
+        photos, total = await list_photos(
+            runner,
+            ctx,
+            filters=filters,
+            limit=limit,
+            offset=offset,
+            sort=sort,
+            ascending=not newest_first,
+        )
+        return {"total": total, "offset": offset, "limit": limit, "photos": photos}
 
     @server.tool(annotations=READ_ONLY, structured_output=False)
     async def preview_photo(
@@ -422,36 +499,12 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         Each cell shows the number, star rating, flag and color label. The text answer maps
         each number to the photo id, so you can act on the photos you choose.
         """
-        if filters is not None:
-            search = build_search(filters)
-            if search is None:
-                raise ToolError("Give at least one filter.")
-            listing = await runner.read(
-                ctx, "photos.search", {"search": search, "limit": max_photos}
-            )
-        else:
-            listing = await runner.read(
-                ctx, "photos.get", {**_targets(photo_ids, scope), "limit": max_photos}
-            )
-        photos = listing.get("photos") or []
+        photos, total = await list_photos(
+            runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
+        )
         if not photos:
             raise ToolError("No photos to show.")
-        semaphore = asyncio.Semaphore(6)
-        cell_request = cell_px if cell_px > 256 else 256
-
-        async def fetch(photo: dict[str, Any]) -> bytes | None:
-            async with semaphore:
-                reply = await hub_client.run(
-                    "photos.preview",
-                    {"uuids": [photo["uuid"]], "size": cell_request},
-                    wait_s=30,
-                    client=_client_name(ctx),
-                )
-            if reply.get("state") != JobState.SUCCEEDED:
-                return None
-            return base64.b64decode(reply["result"]["data"])
-
-        previews = await asyncio.gather(*(fetch(photo) for photo in photos))
+        previews = await fetch_previews(hub_client, ctx, photos, cell_px if cell_px > 256 else 256)
         cells = [
             SheetPhoto(
                 number=index + 1,
@@ -467,12 +520,86 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             f"{cell.number}. {photo['uuid']}  {photo.get('file_name', '')}"
             for cell, photo in zip(cells, photos, strict=True)
         )
-        total = listing.get("total", len(photos))
         header = f"{len(photos)} of {total} photos. Number -> photo id:"
         return [
             Image(data=render(cells, columns=columns, cell=cell_px), format="jpeg"),
             f"{header}\n{legend}",
         ]
+
+    @server.tool(annotations=READ_ONLY)
+    async def analyze_photos(
+        ctx: Context,
+        photo_ids: PhotoIds = None,
+        scope: Scope = "selected",
+        filters: Annotated[
+            PhotoFilters | None, Field(description="Search the catalog instead of using ids")
+        ] = None,
+        checks: Annotated[
+            list[Literal["bursts", "sharpness", "exposure", "horizon"]],
+            Field(description="What to look for"),
+        ] = ["bursts", "sharpness", "exposure", "horizon"],  # noqa: B006 - copied by pydantic
+        burst_gap_s: Annotated[
+            float, Field(ge=0.1, le=30, description="Max seconds between frames of a burst")
+        ] = 2.0,
+        max_photos: Annotated[int, Field(ge=2, le=1000)] = 300,
+        include_stacked_frames: Annotated[
+            bool,
+            Field(
+                description="Also analyze frames stacked under another photo (HDR brackets, "
+                "panorama sources). Off by default: they are kept for the merge."
+            ),
+        ] = False,
+    ) -> dict[str, Any]:
+        """Help cull a shoot: group bursts and near-duplicates and pick the best frame of
+        each, and point out photos that look blurred, badly exposed or tilted.
+
+        Works on Lightroom's previews (with the current edits). The measures are
+        heuristics: before rejecting or deleting anything, look at the doubtful photos
+        with contact_sheet and ask the user. Nothing is changed in the catalog. To act,
+        use set_metadata (flags, ratings, labels) with the photo ids returned here.
+        Closed eyes are not detected; check faces on a contact sheet.
+        """
+        photos, total = await list_photos(
+            runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
+        )
+        skipped_stacked = 0
+        if not include_stacked_frames:
+            photos, skipped_stacked = top_of_stacks(photos)
+        if len(photos) < 1:
+            raise ToolError("No photos to analyze.")
+
+        async def report(done: int, count: int) -> None:
+            await ctx.report_progress(done, count, f"Rendered {done} of {count} previews")
+
+        previews = await fetch_previews(hub_client, ctx, photos, 512, report)
+        wanted = set(checks)
+        with_tilt = "horizon" in wanted
+
+        def compute() -> dict[str, Any]:
+            stats = {
+                photo["uuid"]: measure(jpeg, with_tilt=with_tilt)
+                for photo, jpeg in zip(photos, previews, strict=True)
+                if jpeg
+            }
+            reports = findings(photos, stats, wanted)
+            grouped = groups(photos, stats, burst_gap_s) if "bursts" in wanted else []
+            return {
+                "summary": {
+                    **summarize(reports, grouped),
+                    "photos_found": total,
+                    "stacked_frames_skipped": skipped_stacked,
+                    "previews_missing": sum(1 for jpeg in previews if not jpeg),
+                },
+                "groups": grouped,
+                "photos_with_issues": [r.as_dict() for r in reports if r.issues],
+                "notes": [
+                    "focus is relative: compare photos of the same shoot",
+                    "tilt_deg > 0 means turned counterclockwise; edit_develop CropAngle "
+                    "with the opposite value levels it",
+                ],
+            }
+
+        return await asyncio.to_thread(compute)
 
     # -- develop --------------------------------------------------------------------------
 
