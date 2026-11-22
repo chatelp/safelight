@@ -259,6 +259,7 @@ def fit_rotation(
     width: int,
     height: int,
     focal_px: float,
+    start: tuple[float, float, float] | None = None,
 ) -> tuple[float, float, float]:
     """Pitch, yaw and roll (radians) that best straighten the segments."""
     has_vertical = any(abs(s[3] - s[1]) > abs(s[2] - s[0]) for s in segments)
@@ -272,7 +273,9 @@ def fit_rotation(
     def residuals(x: np.ndarray) -> np.ndarray:
         return np.array(guide_errors(homography(*angles(x), width, height, focal_px), segments))
 
-    x = np.zeros(sum(free))
+    x = np.array(
+        [a for a, flag in zip(start, free, strict=True) if flag] if start else [0.0] * sum(free)
+    )
     cost = float(np.sum(residuals(x) ** 2))
     damping = 1e-3
     for _ in range(100):  # Levenberg-Marquardt with a numerical Jacobian
@@ -307,27 +310,27 @@ def focal_px(long_side: int, focal_35mm: float | None, focal_mm: float | None) -
     return float(focal) / 36.0 * max(long_side, 1)
 
 
-def _pick_guides(lines: list[Line]) -> list[Line]:
-    verticals = [line for line in lines if line.vertical]
-    horizontals = [line for line in lines if not line.vertical]
-    guides: list[Line] = []
-    left = [line for line in verticals if line.center[0] < 0.5]
-    right = [line for line in verticals if line.center[0] >= 0.5]
-    if left and right:
-        guides += [max(left, key=lambda v: v.length), max(right, key=lambda v: v.length)]
-    elif verticals:
-        ranked = sorted(verticals, key=lambda v: -v.length)
-        guides.append(ranked[0])
-        apart = [v for v in ranked[1:] if abs(v.center[0] - ranked[0].center[0]) > 0.15]
-        guides += apart[:1]
-    top = [line for line in horizontals if line.center[1] < 0.5]
-    bottom = [line for line in horizontals if line.center[1] >= 0.5]
-    if top and bottom:
-        guides += [max(top, key=lambda h: h.length), max(bottom, key=lambda h: h.length)]
-    elif horizontals:
-        guides.append(max(horizontals, key=lambda h: h.length))
+def _spread_pair(lines: list[Line], axis: int) -> list[Line]:
+    """The two long lines furthest apart along `axis` (0: x, 1: y)."""
+    if len(lines) < 2:
+        return lines[:1]
+    longest = max(line.length for line in lines)
+    long_ones = [line for line in lines if line.length >= 0.5 * longest]
+    if len(long_ones) < 2:
+        long_ones = sorted(lines, key=lambda line: -line.length)[:4]
+    first = min(long_ones, key=lambda line: line.center[axis])
+    last = max(long_ones, key=lambda line: line.center[axis])
+    return [first] if first is last else [first, last]
+
+
+def _pick_guides(verticals: list[Line], horizontals: list[Line]) -> list[Line]:
+    """Up to four guides for Lightroom: two verticals far apart, two horizontals far apart."""
+    guides = _spread_pair(verticals, 0) + _spread_pair(horizontals, 1)
     if len(guides) < 2:  # Lightroom needs at least two guides
-        rest = sorted((line for line in lines if line not in guides), key=lambda v: -v.length)
+        rest = sorted(
+            (line for line in verticals + horizontals if line not in guides),
+            key=lambda line: -line.length,
+        )
         guides += rest[: 2 - len(guides)]
     return guides
 
@@ -399,12 +402,26 @@ def plan(
             line for line in lines if not line.vertical and abs(line.angle) <= MAX_FRONTAL_DEG
         ]
         horizontals = _frontal_horizontals(verticals, frontal, width, height, f)
+    if len(horizontals) < 2:  # one horizontal line is too little to turn the view
+        horizontals = []
     keep = verticals + horizontals
-    guides = _pick_guides(keep)
+    # The correction is fitted to every line kept, which is steadier than the guides alone.
+    pitch, yaw, roll = fit_rotation([line.segment for line in keep], width, height, f)
+    if horizontals and abs(math.degrees(yaw)) > MAX_YAW_DEG:
+        horizontals = []
+        keep = verticals
+        pitch, yaw, roll = fit_rotation([line.segment for line in keep], width, height, f)
+    guides = _pick_guides(verticals, horizontals)
     if len(guides) < 2:
         return None
     segments = [g.segment for g in guides]
-    pitch, yaw, roll = fit_rotation(segments, width, height, f)
+    # Then fit the guides exactly, unless that moves far from the fit on every line.
+    refined = fit_rotation(segments, width, height, f, start=(pitch, yaw, roll))
+    close = all(
+        abs(math.degrees(a - b)) < 1 for a, b in zip(refined, (pitch, yaw, roll), strict=True)
+    )
+    if close and abs(math.degrees(refined[1])) <= MAX_YAW_DEG:
+        pitch, yaw, roll = refined
     matrix = homography(pitch, yaw, roll, width, height, f)
     worst = max(abs(math.degrees(e)) for e in guide_errors(matrix, segments))
     result = Plan(

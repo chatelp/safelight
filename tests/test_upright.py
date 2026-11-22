@@ -86,3 +86,25 @@ def test_no_lines_no_plan():
     buffer = io.BytesIO()
     Image.new("RGB", (800, 600), (128, 128, 128)).save(buffer, "JPEG")
     assert plan_from_jpeg(buffer.getvalue(), {"width": 6000, "height": 4000}) is None
+
+
+def test_vertical_guides_are_taken_far_apart():
+    from safelight.upright import Line, _pick_guides
+
+    near_left = Line((0.50, 0.0, 0.49, 0.3), 0.30, -1.4)
+    near_right = Line((0.55, 0.3, 0.55, 0.8), 0.46, -0.1)
+    far_left = Line((0.11, 0.46, 0.11, 0.64), 0.18, -0.4)
+    far_right = Line((0.96, 0.27, 0.96, 0.52), 0.24, -1.2)
+    guides = _pick_guides([near_left, near_right, far_left, far_right], [])
+    assert len(guides) == 2
+    assert abs(guides[0].center[0] - guides[1].center[0]) > 0.4
+
+
+def test_a_single_horizontal_does_not_turn_the_view():
+    image = exhibition_wall(3.0)
+    result = plan(image, 1500, 1000, focal_35mm=17)
+    assert result is not None
+    assert (
+        all(abs(g[3] - g[1]) > abs(g[2] - g[0]) for g in result.guides)
+        or len([g for g in result.guides if abs(g[3] - g[1]) <= abs(g[2] - g[0])]) >= 2
+    )
