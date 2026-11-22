@@ -247,3 +247,19 @@ Found while building the plugin commands (lot L3):
 - **Previews:** `requestJpegThumbnail` treats the size as a minimum (512
   returned 640 × 426).
 - **Search:** `findPhotos` over 67 922 matching photos answered in 285 ms.
+
+### Guided Upright (measured on 16.0.1, November 2026)
+
+- `PerspectiveUpright` modes: 0 off, 5 guided (the others, 1 to 4, are Auto, Level,
+  Vertical and Full).
+- Guides are `UprightFourSegmentsCount` (2 to 4) and `UprightFourSegments_N` =
+  `"x1,y1,x2,y2"` in 0..1 image coordinates. The computed correction is
+  `UprightTransform_5`: nine numbers, a row-major 3x3 matrix that maps 0..1 image
+  coordinates to corrected ones (checked on 42 hand-made corrections: the guides come
+  out vertical or horizontal within 0.002° median).
+- Writing guides with `applyDevelopSettings` does not make Lightroom compute the matrix,
+  and neither does choosing the Guided mode again with `LrDevelopController.setValue` in
+  Develop. Writing the matrix does work: Lightroom renders it. Safelight therefore
+  computes the matrix itself (`src/safelight/upright.py`).
+- Not checked yet: the coordinate frame of guides on photos with a non-default
+  `orientation`; Safelight skips those.

@@ -118,17 +118,32 @@ function Develop.get(params)
     }
 end
 
--- develop.apply {uuids|target, settings, relative?, history_name?, dry_run?}
+-- develop.apply {uuids|target, settings, relative?, history_name?, snapshot?, dry_run?}
+-- With `snapshot`, each photo first gets a snapshot of that name (its settings before).
 function Develop.apply(params, job)
     if type(params.settings) ~= "table" or next(params.settings) == nil then
         error("settings must be a non-empty object")
     end
     local photos, missing = Photos.resolve(params)
     if params.dry_run then
-        return Batch.plan(photos, "Change develop settings on " .. #photos .. " photos", missing)
+        local action = params.history_name and params.history_name:gsub("^Safelight: ", "")
+            or "Change develop settings"
+        return Batch.plan(photos, action .. " on " .. #photos .. " photos", missing)
     end
     local notes = {}
     local result = Batch.write(params.history_name or "Safelight: Develop", photos, job, function(photo)
+        if type(params.snapshot) == "string" and params.snapshot ~= "" then
+            -- Never overwrite: running the same change twice keeps the first "before".
+            local exists = false
+            for _, snapshot in ipairs(photo:getDevelopSnapshots() or {}) do
+                if snapshot.name == params.snapshot then
+                    exists = true
+                end
+            end
+            if not exists then
+                photo:createDevelopSnapshot(params.snapshot, false)
+            end
+        end
         local current = photo:getDevelopSettings() or {}
         local settings, photoNotes = resolveSettings(photo, current, params.settings, params.relative == true)
         photo:applyDevelopSettings(settings, params.history_name)

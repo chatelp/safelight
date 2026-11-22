@@ -59,7 +59,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 | Command | Policy | Params | Answer |
 |---|---|---|---|
 | `develop.get` | R | photo, `keys` (optional) | settings (masks excluded; plain names such as `Exposure` map to the Process Version 2012 keys) |
-| `develop.apply` | M | photos, `settings`, `relative`, `history_name` | batch result; values clamped to the photo's slider ranges, with `notes` |
+| `develop.apply` | M | photos, `settings`, `relative`, `history_name`, `snapshot` | batch result; values clamped to the photo's slider ranges, with `notes`. With `snapshot`, each photo first gets a snapshot of that name, unless it already has one |
 | `develop.copy` | M | `from` (uuid), photos, `keys` | copies the settings (by default everything except crop, masks and red eye) |
 | `develop.auto_tone` | M | photos *(Develop)* | count |
 | `develop.auto_white_balance` | M | photos | batch result |

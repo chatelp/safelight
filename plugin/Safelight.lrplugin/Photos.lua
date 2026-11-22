@@ -8,7 +8,7 @@ local Photos = {}
 local RAW_KEYS = {
     "uuid", "path", "fileFormat", "width", "height", "dateTimeOriginalISO8601", "rating",
     "pickStatus", "colorNameForLabel", "isVirtualCopy", "aperture", "shutterSpeed",
-    "isoSpeedRating", "focalLength", "exposureBias", "lens", "gps", "editCount",
+    "isoSpeedRating", "focalLength", "focalLength35mm", "exposureBias", "lens", "gps", "editCount",
     "isInStackInFolder", "stackPositionInFolder",
 }
 local FORMATTED_KEYS = { "cameraModel", "title", "caption", "keywordTags", "copyName" }
@@ -90,6 +90,7 @@ function Photos.summaries(photos)
             camera = nonEmpty(f.cameraModel),
             lens = nonEmpty(r.lens),
             focal_length_mm = r.focalLength,
+            focal_length_35mm = r.focalLength35mm,
             aperture = r.aperture,
             shutter_s = r.shutterSpeed,
             iso = r.isoSpeedRating,
