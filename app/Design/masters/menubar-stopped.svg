@@ -2,6 +2,6 @@
   <title>Hub stopped</title>
   <!-- Template image: black and alpha only; macOS tints it for the menu bar. -->
   <line x1="9" y1="1.0" x2="9" y2="3.0" stroke="#000000" stroke-width="1.2"/>
-  <path d="M7.32 3.60L10.68 3.60L12.68 6.60L5.32 6.60Z" fill="none" stroke="#000000" stroke-width="1.2" stroke-linejoin="round"/>
-  <path d="M7.42 9.40L10.58 9.40L12.94 15.80L5.06 15.80Z" fill="none" stroke="#000000" stroke-width="1.2" stroke-linejoin="round"/>
+  <path d="M6.63 3.60L11.37 3.60L14.80 6.60L3.20 6.60Z" fill="none" stroke="#000000" stroke-width="1.2" stroke-linejoin="round"/>
+  <path d="M6.40 9.40L11.60 9.40L14.30 15.80L3.70 15.80Z" fill="none" stroke="#000000" stroke-width="1.2" stroke-linejoin="round"/>
 </svg>
