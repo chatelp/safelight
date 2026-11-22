@@ -9,6 +9,7 @@ local RAW_KEYS = {
     "uuid", "path", "fileFormat", "width", "height", "dateTimeOriginalISO8601", "rating",
     "pickStatus", "colorNameForLabel", "isVirtualCopy", "aperture", "shutterSpeed",
     "isoSpeedRating", "focalLength", "exposureBias", "lens", "gps", "editCount",
+    "isInStackInFolder", "stackPositionInFolder",
 }
 local FORMATTED_KEYS = { "cameraModel", "title", "caption", "keywordTags", "copyName" }
 
@@ -98,6 +99,9 @@ function Photos.summaries(photos)
             caption = nonEmpty(f.caption),
             keywords = nonEmpty(f.keywordTags),
             edited = (r.editCount or 0) > 0,
+            -- 1 for the photo shown on top of a stack, 2+ for the frames under it
+            -- (for example the brackets under an HDR merge); nil when not stacked.
+            stack_position = r.isInStackInFolder and r.stackPositionInFolder or nil,
         }
     end
     return out

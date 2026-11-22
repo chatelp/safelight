@@ -3,7 +3,7 @@ import io
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
 
-from safelight.analysis import ImageStats, findings, groups, hamming, measure
+from safelight.analysis import ImageStats, findings, groups, hamming, measure, top_of_stacks
 from safelight.search import PhotoFilters, has_post_filters, matches_post_filters
 
 
@@ -131,3 +131,15 @@ def test_empty_border_left_by_a_perspective_correction():
     assert measure(jpeg(scene()), with_tilt=False).blank_edges == ()
     sky = Image.new("RGB", (1100, 700), (255, 255, 255))  # a white sky is not a border
     assert measure(jpeg(sky), with_tilt=False).blank_edges == ()
+
+
+def test_frames_under_a_stack_are_left_out():
+    photos = [
+        {"uuid": "hdr", "stack_position": 1},
+        {"uuid": "bracket-1", "stack_position": 2},
+        {"uuid": "bracket-2", "stack_position": 3},
+        {"uuid": "single"},
+    ]
+    kept, skipped = top_of_stacks(photos)
+    assert [p["uuid"] for p in kept] == ["hdr", "single"]
+    assert skipped == 2

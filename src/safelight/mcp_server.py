@@ -19,7 +19,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .analysis import findings, groups, measure, summarize
+from .analysis import findings, groups, measure, summarize, top_of_stacks
 from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
@@ -542,6 +542,13 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             float, Field(ge=0.1, le=30, description="Max seconds between frames of a burst")
         ] = 2.0,
         max_photos: Annotated[int, Field(ge=2, le=1000)] = 300,
+        include_stacked_frames: Annotated[
+            bool,
+            Field(
+                description="Also analyze frames stacked under another photo (HDR brackets, "
+                "panorama sources). Off by default: they are kept for the merge."
+            ),
+        ] = False,
     ) -> dict[str, Any]:
         """Help cull a shoot: group bursts and near-duplicates and pick the best frame of
         each, and point out photos that look blurred, badly exposed or tilted.
@@ -555,6 +562,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         photos, total = await list_photos(
             runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
         )
+        skipped_stacked = 0
+        if not include_stacked_frames:
+            photos, skipped_stacked = top_of_stacks(photos)
         if len(photos) < 1:
             raise ToolError("No photos to analyze.")
 
@@ -577,6 +587,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 "summary": {
                     **summarize(reports, grouped),
                     "photos_found": total,
+                    "stacked_frames_skipped": skipped_stacked,
                     "previews_missing": sum(1 for jpeg in previews if not jpeg),
                 },
                 "groups": grouped,

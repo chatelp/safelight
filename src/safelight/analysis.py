@@ -165,6 +165,13 @@ def measure(jpeg: bytes, *, with_tilt: bool = True) -> ImageStats:
     )
 
 
+def top_of_stacks(photos: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Photos without the frames stacked under another one (brackets under an HDR merge,
+    panorama sources...), and how many were left out."""
+    kept = [p for p in photos if int(p.get("stack_position") or 1) <= 1]
+    return kept, len(photos) - len(kept)
+
+
 def hamming(a: int, b: int) -> int:
     return (a ^ b).bit_count()
 
