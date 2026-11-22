@@ -66,6 +66,7 @@ EXPECTED_TOOLS = {
     "manage_collection",
     "organize_photos",
     "export_photos",
+    "straighten_photos",
 }
 
 

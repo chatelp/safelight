@@ -1,9 +1,11 @@
 -- LrDevelopController only acts on the photo shown in the Develop module. This helper
 -- selects a photo, switches to Develop and waits until Lightroom has loaded it.
 local LrApplicationView = import "LrApplicationView"
+local LrDate = import "LrDate"
 local LrDevelopController = import "LrDevelopController"
 local LrTasks = import "LrTasks"
 
+local Logger = require "Logger"
 local Photos = require "Photos"
 
 local DevelopModule = {}
@@ -23,16 +25,19 @@ function DevelopModule.withPhoto(photo, fn)
         Photos.catalog():setSelectedPhotos(photo, {})
     end
     if LrApplicationView.getCurrentModuleName() ~= "develop" then
+        Logger.debug("Switching to Develop for " .. wanted)
         LrApplicationView.switchToModule("develop")
     end
-    local waited = 0
+    -- Wall-clock deadline: LrTasks.sleep can last much longer than asked.
+    local deadline = LrDate.currentTime() + LOAD_TIMEOUT_S
     while LrApplicationView.getCurrentModuleName() ~= "develop" or activeUuid() ~= wanted do
-        if waited >= LOAD_TIMEOUT_S then
-            error("Lightroom did not open this photo in the Develop module in time")
+        if LrDate.currentTime() > deadline then
+            error("Lightroom did not open this photo in the Develop module in time (module: "
+                .. tostring(LrApplicationView.getCurrentModuleName()) .. ")")
         end
         LrTasks.sleep(0.1)
-        waited = waited + 0.1
     end
+    Logger.debug("Develop shows " .. wanted)
     LrTasks.sleep(0.3) -- let Develop finish loading the photo's settings
     return fn()
 end

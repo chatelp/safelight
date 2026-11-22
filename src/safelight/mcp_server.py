@@ -24,6 +24,9 @@ from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
 from .search import PhotoFilters, build_search, has_post_filters, matches_post_filters
+from .upright import RESET_SETTINGS, Plan, plan_from_jpeg
+
+STRAIGHTEN_SNAPSHOT = "Before Safelight straighten"
 
 INSTRUCTIONS = """\
 Safelight lets you work in the user's Adobe Lightroom Classic catalog.
@@ -600,6 +603,135 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             }
 
         return await asyncio.to_thread(compute)
+
+    @server.tool(annotations=CHANGES)
+    async def straighten_photos(
+        ctx: Context,
+        photo_ids: PhotoIds = None,
+        scope: Scope = "selected",
+        filters: Annotated[
+            PhotoFilters | None, Field(description="Search the catalog instead of using ids")
+        ] = None,
+        guides: Annotated[
+            Literal["verticals_and_frontal", "verticals"],
+            Field(
+                description="verticals_and_frontal: vertical lines, plus the horizontal "
+                "edges of things facing the camera (prints, frames), like a hand-drawn "
+                "Guided Upright with four lines. verticals: vertical lines only."
+            ),
+        ] = "verticals_and_frontal",
+        max_photos: Annotated[int, Field(ge=1, le=500)] = 200,
+        confirmation_token: ConfirmationToken = None,
+    ) -> ActionResult:
+        """Straighten verticals (and frontal horizontals) of architecture and exhibition
+        photos with Lightroom's Guided Upright, each photo with its own correction.
+
+        For each photo: a snapshot "Before Safelight straighten" keeps the current
+        settings, earlier transform corrections and the crop are reset, Safelight finds
+        the straight lines on a fresh preview, and writes up to four Upright guides with
+        the matching correction. The correction is a rotation of the camera: prints and
+        walls keep their proportions. Corners left empty by the correction are not
+        cropped. Rotated photos are skipped. Check the result with contact_sheet, and
+        look closer at photos listed with warnings: the user can move the guides in
+        Lightroom (Transform tool) to adjust one.
+        """
+        photos, _ = await list_photos(
+            runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
+        )
+        photos, skipped_stacked = top_of_stacks(photos)
+        if not photos:
+            raise ToolError("No photos to straighten.")
+        rotated: list[dict[str, Any]] = []
+        upright_photos = []
+        for photo in photos:
+            current = await runner.read(
+                ctx, "develop.get", {"uuids": [photo["uuid"]], "keys": ["orientation"]}
+            )
+            orientation = (current.get("settings") or {}).get("orientation")
+            if orientation in (None, "", "AB"):
+                upright_photos.append(photo)
+            else:
+                rotated.append({"id": photo["uuid"], "file": photo.get("file_name")})
+        if not upright_photos:
+            raise ToolError("All these photos are rotated; Safelight cannot straighten them yet.")
+        ids = [photo["uuid"] for photo in upright_photos]
+        reset = await runner.change(
+            ctx,
+            "develop.apply",
+            {
+                "uuids": ids,
+                "settings": RESET_SETTINGS,
+                "history_name": "Safelight: Straighten",
+                "snapshot": STRAIGHTEN_SNAPSHOT,
+            },
+            confirmation_token,
+        )
+        if reset.state != "succeeded":
+            return reset
+
+        async def report(done: int, count: int) -> None:
+            await ctx.report_progress(done, 2 * count, f"Rendered {done} of {count} previews")
+
+        previews = await fetch_previews(hub_client, ctx, upright_photos, 2048, report)
+        frontal = guides == "verticals_and_frontal"
+
+        def compute() -> list[Plan | None]:
+            return [
+                plan_from_jpeg(jpeg, photo, frontal_horizontals=frontal) if jpeg else None
+                for photo, jpeg in zip(upright_photos, previews, strict=True)
+            ]
+
+        plans = await asyncio.to_thread(compute)
+        done: list[dict[str, Any]] = []
+        not_done: list[dict[str, Any]] = []
+        for index, (photo, jpeg, plan) in enumerate(
+            zip(upright_photos, previews, plans, strict=True)
+        ):
+            await ctx.report_progress(
+                len(upright_photos) + index, 2 * len(upright_photos), "Straightening"
+            )
+            entry = {"id": photo["uuid"], "file": photo.get("file_name")}
+            if plan is None:
+                reason = "no preview" if not jpeg else "no usable straight line found"
+                not_done.append({**entry, "reason": reason})
+                continue
+            reply = await hub_client.run(
+                "develop.apply",
+                {
+                    "uuids": [photo["uuid"]],
+                    "settings": plan.settings(),
+                    "history_name": "Safelight: Straighten",
+                },
+                wait_s=30,
+                client=_client_name(ctx),
+            )
+            if reply.get("state") != JobState.SUCCEEDED:
+                error = (reply.get("error") or {}).get("message") or reply.get("state")
+                not_done.append({**entry, "reason": f"Lightroom refused it: {error}"})
+                continue
+            done.append({**entry, **plan.as_dict()})
+        to_review = [entry["id"] for entry in done if entry.get("warnings")]
+        return ActionResult(
+            state="succeeded",
+            result={
+                "summary": {
+                    "straightened": len(done),
+                    "not_straightened": len(not_done),
+                    "to_review": len(to_review),
+                    "rotated_skipped": len(rotated),
+                    "stacked_frames_skipped": skipped_stacked,
+                },
+                "straightened": done,
+                "not_straightened": not_done,
+                "rotated_skipped": rotated,
+                "notes": [
+                    f"each photo has a snapshot '{STRAIGHTEN_SNAPSHOT}' with its settings "
+                    "from before",
+                    "the crop was reset and corners left empty are not cropped",
+                    "pitch > 0: the camera was pointing down; roll > 0: turned clockwise",
+                ],
+            },
+        )
 
     # -- develop --------------------------------------------------------------------------
 
