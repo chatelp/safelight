@@ -31,6 +31,15 @@ def test_tilt_is_measured_within_a_few_tenths_of_a_degree(tilt):
     assert measured == pytest.approx(tilt, abs=0.3)
 
 
+@pytest.mark.parametrize("tilt", [0.0, 2.0, -3.0])
+def test_a_lone_horizon_is_enough(tilt):
+    base = Image.new("RGB", (1600, 1100), (150, 170, 200))
+    ImageDraw.Draw(base).rectangle((0, 560, 1600, 1100), fill=(40, 70, 110))
+    image = base.rotate(tilt, resample=Image.Resampling.BICUBIC, fillcolor=(150, 170, 200))
+    measured = measure(jpeg(image.crop((250, 200, 1350, 900)))).tilt_deg
+    assert measured == pytest.approx(tilt, abs=0.3)
+
+
 def test_blur_lowers_focus_a_lot():
     sharp = measure(jpeg(scene()))
     blurred = measure(jpeg(scene().filter(ImageFilter.GaussianBlur(4))))
@@ -113,3 +122,12 @@ def test_post_filters_on_focal_length_aperture_and_shutter():
     )
     assert not matches_post_filters({"aperture": 2.8}, filters)
     assert not has_post_filters(PhotoFilters(rating_min=3))
+
+
+def test_empty_border_left_by_a_perspective_correction():
+    image = scene()
+    ImageDraw.Draw(image).polygon([(0, 0), (1100, 0), (1100, 30)], fill=(255, 255, 255))
+    assert measure(jpeg(image), with_tilt=False).blank_edges == ("top",)
+    assert measure(jpeg(scene()), with_tilt=False).blank_edges == ()
+    sky = Image.new("RGB", (1100, 700), (255, 255, 255))  # a white sky is not a border
+    assert measure(jpeg(sky), with_tilt=False).blank_edges == ()

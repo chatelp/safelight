@@ -32,7 +32,8 @@ are returned as images (contact sheets are composed by the relay with Pillow).
 Photo analysis (`analyze_photos`, in `src/safelight/analysis.py`) also runs in the relay,
 on 512 px Lightroom previews, with NumPy: focus from the 99th percentile of the
 Laplacian, clipping and brightness from the histogram, tilt from projection profiles of
-the edge map, near-duplicates from a 64-bit difference hash, and bursts from capture
+the edge map (verticals first, so receding lines in interiors don't count), empty
+borders from flat white or black edge pixels, near-duplicates from a 64-bit difference hash, and bursts from capture
 times closer than a few seconds.
 
 ### Hub (`safelight hub`)

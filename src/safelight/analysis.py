@@ -19,6 +19,12 @@ import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 
 ANALYSIS_SIZE = 512  # long edge of the previews analyzed, in pixels
+# How much more peaked the best edge profile must be than a typical angle's to count as a
+# real straight line. Horizontals need more: in interiors, receding lines in perspective
+# give weak, misleading peaks (calibrated on 50 wide-angle interiors).
+MIN_VERTICAL_STRENGTH = 1.6
+STRONG_VERTICAL_STRENGTH = 2.2
+MIN_HORIZON_STRENGTH = 2.5
 
 
 @dataclass
@@ -38,6 +44,9 @@ class ImageStats:
     positive means the scene is turned counterclockwise. None when no clear line."""
     dhash: int
     """64-bit difference hash, for near-duplicate detection."""
+    blank_edges: tuple[str, ...] = ()
+    """Edges with an empty (white or black) band, typically left by a perspective
+    correction without "Constrain Crop": top, bottom, left, right."""
 
 
 def _gray(jpeg: bytes) -> np.ndarray:
@@ -75,33 +84,71 @@ def _tilt(gray: np.ndarray) -> float | None:
     gx[:, 1:-1] = smooth[:, 2:] - smooth[:, :-2]
     gy[1:-1, :] = smooth[2:, :] - smooth[:-2, :]
     magnitude = np.hypot(gx, gy)
-    threshold = np.percentile(magnitude, 92)
-    if threshold <= 0:
-        return None
+    if magnitude.max() <= 4:
+        return None  # flat image
+    # Keep the strongest edges; on mostly flat images (sky over sea) the percentile is 0.
+    threshold = max(float(np.percentile(magnitude, 92)), 4.0)
     edges = Image.fromarray(np.clip(magnitude * (magnitude > threshold), 0, 255).astype(np.uint8))
 
-    def peakedness(angle: float) -> float:
+    cache: dict[float, tuple[float, float]] = {}
+
+    def profiles(angle: float) -> tuple[float, float]:
+        key = round(angle, 2)
+        if key not in cache:
+            cache[key] = _profiles(key)
+        return cache[key]
+
+    def _profiles(angle: float) -> tuple[float, float]:
         rotated = np.asarray(
             edges.rotate(angle, resample=Image.Resampling.BILINEAR), dtype=np.float32
         )
         # Ignore the borders, where rotation brings in empty corners.
         h, w = rotated.shape
         core = rotated[h // 8 : -h // 8, w // 8 : -w // 8]
-        return float(core.sum(axis=1).var() + core.sum(axis=0).var())
+        return float(core.sum(axis=0).var()), float(core.sum(axis=1).var())
 
-    coarse = np.arange(-10.0, 10.01, 0.5)
-    scores = np.array([peakedness(a) for a in coarse])
-    if scores.max() <= 0:
-        return None
-    best = float(coarse[int(np.argmax(scores))])
-    fine = np.arange(best - 0.5, best + 0.51, 0.1)
-    fine_scores = np.array([peakedness(a) for a in fine])
-    level_angle = float(fine[int(np.argmax(fine_scores))])
-    # A weak optimum means no dominant straight lines (portraits, foliage...).
-    if fine_scores.max() < 1.15 * float(np.median(scores)):
-        return None
-    # Rotating by level_angle levels the scene, so the scene is tilted by -level_angle.
-    return -level_angle
+    def best_angle(index: int) -> tuple[float, float] | None:
+        """Best angle for verticals (index 0) or horizontals (index 1), and its strength."""
+        coarse = np.arange(-10.0, 10.01, 0.5)
+        scores = np.array([profiles(a)[index] for a in coarse])
+        baseline = float(np.median(scores))
+        if baseline <= 0:
+            return None
+        center = float(coarse[int(np.argmax(scores))])
+        fine = np.arange(center - 0.5, center + 0.51, 0.1)
+        fine_scores = np.array([profiles(a)[index] for a in fine])
+        return float(fine[int(np.argmax(fine_scores))]), float(fine_scores.max()) / baseline
+
+    # In architecture and interiors, verticals stay vertical while horizontal lines recede
+    # in perspective, so clear verticals win; then a clear horizon; then weaker verticals.
+    verticals, horizontals = best_angle(0), best_angle(1)
+    for found, minimum in (
+        (verticals, STRONG_VERTICAL_STRENGTH),
+        (horizontals, MIN_HORIZON_STRENGTH),
+        (verticals, MIN_VERTICAL_STRENGTH),
+    ):
+        if found is not None and found[1] >= minimum:
+            # Rotating by this angle levels the scene, so the scene is tilted the other way.
+            return -found[0]
+    return None
+
+
+def _blank_edges(gray: np.ndarray) -> tuple[str, ...]:
+    """Edges where the outermost pixels are flat white (or black) but the picture just
+    inside is not: the empty wedge a perspective or rotation leaves without a crop."""
+    found = []
+    sides = {
+        "top": (gray[0, :], gray[6, :]),
+        "bottom": (gray[-1, :], gray[-7, :]),
+        "left": (gray[:, 0], gray[:, 6]),
+        "right": (gray[:, -1], gray[:, -7]),
+    }
+    for name, (edge, inside) in sides.items():
+        white = (edge >= 245) & (inside < edge - 40)
+        black = (edge <= 3) & (inside > edge + 40)
+        if max(white.mean(), black.mean()) >= 0.25:
+            found.append(name)
+    return tuple(found)
 
 
 def measure(jpeg: bytes, *, with_tilt: bool = True) -> ImageStats:
@@ -114,6 +161,7 @@ def measure(jpeg: bytes, *, with_tilt: bool = True) -> ImageStats:
         clipped_shadows=float((gray <= 4).mean()),
         tilt_deg=None if tilt is None else round(tilt, 1) + 0.0,
         dhash=_dhash(gray),
+        blank_edges=_blank_edges(gray),
     )
 
 
@@ -125,7 +173,7 @@ def hamming(a: int, b: int) -> int:
 
 BLUR_RELATIVE = 0.45  # below this share of the set's median focus: probably blurred
 BLUR_ABSOLUTE = 18.0  # used for small sets (fewer than 5 photos)
-TILT_MIN_DEG = 0.7
+TILT_MIN_DEG = 1.0
 TILT_MAX_DEG = 8.0
 
 
@@ -189,6 +237,12 @@ def findings(
                 report.issues.append("very bright overall")
             elif s.brightness < 0.12:
                 report.issues.append("very dark overall")
+        if "horizon" in checks and s.blank_edges:
+            report.issues.append(
+                "empty border along the "
+                + ", ".join(s.blank_edges)
+                + " edge (perspective or rotation without a constrained crop)"
+            )
         if (
             "horizon" in checks
             and s.tilt_deg is not None
@@ -302,10 +356,29 @@ def _why(best: str, group: list[str], stats: dict[str, ImageStats]) -> str:
     return "best balance of sharpness, exposure, rating and flag"
 
 
+ISSUE_KINDS = {
+    "blurred": "possibly blurred",
+    "highlights": "blown highlights",
+    "shadows": "crushed shadows",
+    "very bright": "very bright",
+    "very dark": "very dark",
+    "tilted": "tilted",
+    "border": "empty border",
+}
+
+
 def summarize(reports: list[PhotoReport], grouped: list[dict[str, Any]]) -> dict[str, Any]:
     flagged = [r for r in reports if r.issues]
     in_groups = sum(len(g["photo_ids"]) for g in grouped)
+    counts: dict[str, int] = {}
+    for report in flagged:
+        for issue in report.issues:
+            for marker, label in ISSUE_KINDS.items():
+                if marker in issue:
+                    counts[label] = counts.get(label, 0) + 1
+                    break
     return {
+        "issue_counts": counts,
         "photos_analyzed": len(reports),
         "photos_with_issues": len(flagged),
         "groups": len(grouped),
