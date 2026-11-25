@@ -26,7 +26,7 @@ photos selected in Lightroom (`scope: "selected"`, the default) or the active ph
 | `copy_develop_settings` | change | Sync settings from one photo to others (everything but crop, masks and red eye, or chosen settings). |
 | `auto_develop` | change | Auto Tone, Auto White Balance, or reset. |
 | `apply_preset` | change | Apply one of the user's develop presets, with an amount. |
-| `snapshot` | change, delete | Create, apply or delete a named snapshot. |
+| `snapshot` | change, delete | Create (on many photos), apply or delete (one photo at a time) a named snapshot. |
 | `create_mask` | change | AI mask of the subject, sky, background or people, optionally adjusted right away. |
 | `edit_mask` | change | Change a mask's local adjustments. |
 | `change_mask` | change, delete | Invert or delete a mask. |
