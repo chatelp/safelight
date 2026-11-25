@@ -303,8 +303,50 @@ async def test_straighten_puts_back_an_earlier_guided_upright(safelight_home, mo
     ):
         photo = catalog.photos["FAKE-0001"]
         photo["settings"].update(guided)
-        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        args = {"photo_ids": ["FAKE-0001"], "replace_existing_upright": True}
+        await mcp.call_tool("straighten_photos", args)
     assert {key: photo["settings"][key] for key in guided} == guided
+
+
+async def test_straighten_never_redoes_an_existing_correction_unless_asked(
+    safelight_home, monkeypatch
+):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: _plan())
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        by_hand, other = (catalog.photos[i] for i in catalog.selected)
+        by_hand["settings"].update(PerspectiveUpright=5, UprightTransform_5="by hand", CropTop=0.02)
+        kept = dict(by_hand["settings"])
+        result = (await mcp.call_tool("straighten_photos", {})).structured_content["result"]
+        assert by_hand["settings"] == kept
+        assert other["settings"]["PerspectiveUpright"] == 5
+        assert [e["id"] for e in result["already_corrected_skipped"]] == ["FAKE-0001"]
+
+        again = await mcp.call_tool("straighten_photos", {})  # both are corrected now
+        assert again.is_error and "2 photos already" in again.content[0].text
+        assert by_hand["settings"] == kept
+
+        args = {"photo_ids": ["FAKE-0001"], "replace_existing_upright": True}
+        await mcp.call_tool("straighten_photos", args)
+        assert by_hand["settings"]["UprightTransform_5"] != "by hand"
+
+
+async def test_straighten_labels_only_what_it_changed(safelight_home, monkeypatch):
+    plans = iter([_plan(), None, _plan()])
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: next(plans))
+    ids = ["FAKE-0001", "FAKE-0002", "FAKE-0003"]
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        catalog.photos["FAKE-0003"]["label"] = "red"  # the user's own label
+        args = {"photo_ids": ids, "label": "purple"}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        labels = [catalog.photos[i]["label"] for i in ids]
+    assert labels == ["purple", None, "red"]
+    assert [e["label"] for e in result["straightened"]] == ["purple", "kept red"]
 
 
 async def test_straighten_puts_photos_back_after_an_error(safelight_home, monkeypatch):
