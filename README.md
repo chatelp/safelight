@@ -2,6 +2,8 @@
 
 # Safelight for Lightroom Classic
 
+[![M8ven Score](https://m8ven.ai/badge/mcp/chatelp-safelight-7dz4s4?v=93dab9889e040fe309d673784bc87789)](https://m8ven.ai/mcp/chatelp-safelight-7dz4s4?s=readme)
+
 Safelight lets Claude and other MCP clients work in your Adobe Lightroom Classic
 catalog: inspect photos, edit Develop settings and masks, cull large shoots, write
 metadata, organize collections and export, with Lightroom doing the actual work.
