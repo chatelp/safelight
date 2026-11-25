@@ -52,6 +52,11 @@ class FakeCatalog:
                 "aperture": [1.8, 2.8, 2.8, 4.0, 5.6, 1.4, 8.0, 2.0][index % 8],
             }
         self.selected = list(self.photos)[:2]
+        self.presets = [
+            {"uuid": "PRESET-1", "name": "Punchy", "folder": "Mine"},
+            {"uuid": "PRESET-2", "name": "Soft black and white", "folder": "Shared"},
+        ]
+        self.exports: list[dict[str, Any]] = []
         self.collections: list[dict[str, Any]] = [
             {"id": 1, "name": "Portfolio", "kind": "collection", "photos": []}
         ]
@@ -184,6 +189,199 @@ class FakeCatalog:
         photo = self._resolve(params)[0]
         return {"uuid": photo["uuid"], "snapshots": photo["snapshots"]}
 
+    # -- develop, continued: same checks on parameters as the plugin ------------------------
+
+    @staticmethod
+    def _batch(photos: list[dict[str, Any]], **extra: Any) -> dict[str, Any]:
+        return {"requested": len(photos), "updated": len(photos), "failures": [], **extra}
+
+    async def develop_copy(self, params: dict[str, Any], _: Progress) -> Any:
+        source = self.photos.get(params.get("from", ""))
+        if source is None:
+            raise CommandError("COMMAND_FAILED", f"No photo found with id {params.get('from')}")
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Copy develop settings to {len(photos)} photos")
+        keys = params.get("keys") or list(source["settings"])
+        for photo in photos:
+            for name in keys:
+                key = {"Exposure": "Exposure2012", "Contrast": "Contrast2012"}.get(name, name)
+                photo["settings"][key] = source["settings"][key]
+        return self._batch(photos)
+
+    async def auto_tone(self, params: dict[str, Any], _: Progress) -> Any:
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Apply Auto Tone to {len(photos)} photos")
+        for photo in photos:
+            photo["settings"]["Exposure2012"] = 0.35
+        return self._batch(photos)
+
+    async def auto_white_balance(self, params: dict[str, Any], _: Progress) -> Any:
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Set white balance to Auto on {len(photos)} photos")
+        for photo in photos:
+            photo["settings"]["WhiteBalance"] = "Auto"
+        return self._batch(photos)
+
+    async def develop_reset(self, params: dict[str, Any], _: Progress) -> Any:
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Reset all develop settings of {len(photos)} photos")
+        for photo in photos:
+            photo["settings"] = {}
+        return self._batch(photos)
+
+    async def presets_list(self, _: dict[str, Any], __: Progress) -> Any:
+        return {"count": len(self.presets), "presets": self.presets}
+
+    async def apply_preset(self, params: dict[str, Any], _: Progress) -> Any:
+        preset = next((p for p in self.presets if p["uuid"] == params.get("preset_uuid")), None)
+        if preset is None:
+            raise CommandError("COMMAND_FAILED", "No develop preset with this id")
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Apply preset to {len(photos)} photos")
+        for photo in photos:
+            photo["preset"] = (preset["name"], params.get("amount"))
+        return self._batch(photos, preset=preset["name"])
+
+    async def snapshots_create(self, params: dict[str, Any], _: Progress) -> Any:
+        if not params.get("name"):
+            raise CommandError("COMMAND_FAILED", "name is required")
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Create snapshot on {len(photos)} photos")
+        for photo in photos:
+            photo["snapshots"].append(
+                {"id": f"S{len(photo['snapshots']) + 1}", "name": params["name"]}
+            )
+        return self._batch(photos)
+
+    def _snapshot(self, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        photo = self._resolve(params)[0]  # the first photo only, like the plugin
+        for item in photo["snapshots"]:
+            if params.get("name") == item["name"]:
+                return photo, item
+        raise CommandError("COMMAND_FAILED", "No snapshot with this id or name on this photo")
+
+    async def snapshots_apply(self, params: dict[str, Any], _: Progress) -> Any:
+        photo, item = self._snapshot(params)
+        photo["applied_snapshot"] = item["name"]
+        return {"uuid": photo["uuid"], "applied": item["name"]}
+
+    async def snapshots_delete(self, params: dict[str, Any], _: Progress) -> Any:
+        photo, item = self._snapshot(params)
+        if params.get("dry_run"):
+            return {"dry_run": True, "affected": 1, "summary": "Delete snapshot"}
+        photo["snapshots"].remove(item)
+        return {"uuid": photo["uuid"], "deleted": item["name"]}
+
+    # -- masks --------------------------------------------------------------------------------
+
+    def _mask(self, params: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+        photo = self._resolve(params)[0]
+        for mask in photo["masks"]:
+            if params.get("mask_id") in (mask["id"], mask["name"]):
+                return photo, mask
+        raise CommandError("COMMAND_FAILED", f"No mask '{params.get('mask_id')}' on this photo")
+
+    async def masks_create(self, params: dict[str, Any], _: Progress) -> Any:
+        if params.get("kind") not in ("subject", "sky", "background", "people"):
+            raise CommandError("COMMAND_FAILED", "kind must be subject, sky, background or people")
+        photo = self._resolve(params)[0]
+        if params.get("dry_run"):
+            return {"dry_run": True, "affected": 1, "summary": "Create a mask"}
+        mask = {
+            "id": f"M{len(photo['masks']) + 1}",
+            "name": params["kind"],
+            "inverted": False,
+            "adjustments": {},
+        }
+        photo["masks"].append(mask)
+        return {"uuid": photo["uuid"], "mask_id": mask["id"], "kind": params["kind"]}
+
+    async def masks_adjust(self, params: dict[str, Any], _: Progress) -> Any:
+        if not params.get("adjustments"):
+            raise CommandError("COMMAND_FAILED", "adjustments must be a non-empty object")
+        photo, mask = self._mask(params)
+        if params.get("dry_run"):
+            return {"dry_run": True, "affected": 1, "summary": "Adjust mask"}
+        for name, value in params["adjustments"].items():
+            base = mask["adjustments"].get(name, 0) if params.get("relative") else 0
+            mask["adjustments"][name] = base + value
+        return {"uuid": photo["uuid"], "mask": dict(mask)}
+
+    async def masks_invert(self, params: dict[str, Any], _: Progress) -> Any:
+        photo, mask = self._mask(params)
+        if params.get("dry_run"):
+            return {"dry_run": True, "affected": 1, "summary": "Invert mask"}
+        mask["inverted"] = not mask["inverted"]
+        return {"uuid": photo["uuid"], "inverted": mask["id"]}
+
+    async def masks_delete(self, params: dict[str, Any], _: Progress) -> Any:
+        photo, mask = self._mask(params)
+        if params.get("dry_run"):
+            return {"dry_run": True, "affected": 1, "summary": "Delete mask"}
+        photo["masks"].remove(mask)
+        return {"uuid": photo["uuid"], "deleted": mask["id"]}
+
+    # -- keywords, organization, export -------------------------------------------------------
+
+    async def keywords_remove(self, params: dict[str, Any], _: Progress) -> Any:
+        if not params.get("keywords"):
+            raise CommandError("COMMAND_FAILED", "keywords must be a non-empty list")
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Remove keywords from {len(photos)} photos")
+        known = {k for photo in self.photos.values() for k in photo["keywords"]}
+        for photo in photos:
+            photo["keywords"] = [k for k in photo["keywords"] if k not in params["keywords"]]
+        missing = [k for k in params["keywords"] if k not in known]
+        return self._batch(photos, keywords_not_found=missing)
+
+    async def keywords_list(self, params: dict[str, Any], _: Progress) -> Any:
+        found = sorted({k for photo in self.photos.values() for k in photo["keywords"]})
+        query = (params.get("query") or "").lower()
+        found = [k for k in found if query in k.lower()]
+        return {"total": len(found), "keywords": found[: int(params.get("limit", 500))]}
+
+    async def rotate(self, params: dict[str, Any], _: Progress) -> Any:
+        if params.get("direction") not in ("left", "right"):
+            raise CommandError("COMMAND_FAILED", "direction must be left or right")
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Rotate {len(photos)} photos")
+        for photo in photos:
+            photo["rotation"] = params["direction"]
+        return self._batch(photos)
+
+    async def create_virtual_copies(self, params: dict[str, Any], _: Progress) -> Any:
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Create a virtual copy of {len(photos)} photos")
+        copies = []
+        for photo in photos:
+            uuid = f"{photo['uuid']}-COPY"
+            self.photos[uuid] = {**photo, "uuid": uuid, "copy_name": params.get("name")}
+            copies.append(uuid)
+        return {"requested": len(photos), "copies": copies, "missing": []}
+
+    async def export(self, params: dict[str, Any], _: Progress) -> Any:
+        if params.get("format", "JPEG") not in ("JPEG", "TIFF", "PNG", "DNG", "ORIGINAL"):
+            raise CommandError("COMMAND_FAILED", "unknown format")
+        if not str(params.get("destination", "")).startswith("/"):
+            raise CommandError("COMMAND_FAILED", "destination must be an absolute folder path")
+        if params.get("if_exists", "rename") not in ("rename", "overwrite", "skip"):
+            raise CommandError("COMMAND_FAILED", "if_exists must be rename, overwrite or skip")
+        photos = self._resolve(params)
+        if params.get("dry_run"):
+            return self._plan(photos, f"Export {len(photos)} photos")
+        self.exports.append(params)
+        files = [f"{params['destination']}/{p['file_name']}" for p in photos]
+        return {"destination": params["destination"], "files": files, "failures": []}
+
     async def collections_list(self, _: dict[str, Any], __: Progress) -> Any:
         return {
             "count": len(self.collections),
@@ -213,6 +411,24 @@ class FakeCatalog:
             "keywords.add": self.keywords_add,
             "masks.list": self.masks_list,
             "snapshots.list": self.snapshots_list,
+            "develop.copy": self.develop_copy,
+            "develop.auto_tone": self.auto_tone,
+            "develop.auto_white_balance": self.auto_white_balance,
+            "develop.reset": self.develop_reset,
+            "develop.apply_preset": self.apply_preset,
+            "presets.list": self.presets_list,
+            "snapshots.create": self.snapshots_create,
+            "snapshots.apply": self.snapshots_apply,
+            "snapshots.delete": self.snapshots_delete,
+            "masks.create": self.masks_create,
+            "masks.adjust": self.masks_adjust,
+            "masks.invert": self.masks_invert,
+            "masks.delete": self.masks_delete,
+            "keywords.remove": self.keywords_remove,
+            "keywords.list": self.keywords_list,
+            "photos.rotate": self.rotate,
+            "photos.create_virtual_copies": self.create_virtual_copies,
+            "export.photos": self.export,
             "collections.list": self.collections_list,
             "collections.delete": self.collections_delete,
         }

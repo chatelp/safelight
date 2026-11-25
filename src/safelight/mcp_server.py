@@ -57,26 +57,25 @@ and stop them with safelight_cancel_job.
 Safelight is not affiliated with Adobe.
 """
 
-
-def _hints(*, read_only: bool, destructive: bool, idempotent: bool) -> ToolAnnotations:
-    """All four MCP hints, always explicit: some clients and directories require them.
-
-    Destructive means information can be lost that Lightroom's History panel does not
-    keep (files, captions, keywords, snapshots...) or that all edits are reset. No tool
-    reaches outside this Mac."""
-    return ToolAnnotations(
-        readOnlyHint=read_only,
-        destructiveHint=destructive,
-        idempotentHint=idempotent,
-        openWorldHint=False,
-    )
-
-
-READ_ONLY = _hints(read_only=True, destructive=False, idempotent=True)
-CHANGES = _hints(read_only=False, destructive=False, idempotent=False)
-CHANGES_ONCE = _hints(read_only=False, destructive=False, idempotent=True)
-DESTRUCTIVE = _hints(read_only=False, destructive=True, idempotent=False)
-DESTRUCTIVE_ONCE = _hints(read_only=False, destructive=True, idempotent=True)
+# All four MCP hints, always explicit: some clients and directories require them, and
+# tools that read the source only see literal values. Destructive means information can be
+# lost that Lightroom's History panel does not keep (files, captions, keywords,
+# snapshots...) or that all edits are reset. No tool reaches outside this Mac.
+READ_ONLY = ToolAnnotations(
+    readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+CHANGES = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False
+)
+CHANGES_ONCE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False
+)
+DESTRUCTIVE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False
+)
+DESTRUCTIVE_ONCE = ToolAnnotations(
+    readOnlyHint=False, destructiveHint=True, idempotentHint=True, openWorldHint=False
+)
 
 PhotoIds = Annotated[
     list[str] | None,
@@ -927,7 +926,12 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         confirmation_token: ConfirmationToken = None,
     ) -> ActionResult:
         """Save the current develop settings as a named snapshot, go back to one, or delete
-        one. Create a snapshot before a big edit so the user can return to it."""
+        one. Create a snapshot before a big edit so the user can return to it. apply and
+        delete work on one photo at a time."""
+        if action != "create" and (
+            len(photo_ids or []) > 1 or (not photo_ids and scope != "active")
+        ):
+            raise ToolError(f"{action} works on one photo at a time: give one photo id.")
         command = {
             "create": "snapshots.create",
             "apply": "snapshots.apply",
@@ -1082,6 +1086,11 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 ctx, "keywords.add", {**targets, "keywords": add}, confirmation_token
             )
             if outcome.state != "succeeded" or not remove:
+                if outcome.state == "running":
+                    outcome.message = (
+                        f"{outcome.message} Nothing was removed yet: once it is done, call "
+                        "edit_keywords again with only `remove`."
+                    )
                 return outcome
             results["added"] = outcome.result
         if remove:
@@ -1093,6 +1102,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             )
             if add and outcome.state == "succeeded":
                 outcome.result = {**results, "removed": outcome.result}
+            elif add and outcome.state == "confirmation_required":
+                # The token is for the removal alone, so it cannot go with `add` again.
+                outcome.result = results
+                outcome.message = (
+                    "The keywords were added. Removing needs its own approval: show the summary "
+                    "to the user. Only if they approve, call edit_keywords again without `add`, "
+                    "with the same `remove` and photos, and confirmation_token."
+                )
         return outcome  # type: ignore[return-value]
 
     @server.tool(annotations=READ_ONLY)
