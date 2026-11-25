@@ -4,15 +4,18 @@ import asyncio
 import contextlib
 
 import mcp.types as types
+import numpy as np
 import pytest
 from mcp import Client
 
+from safelight import mcp_server
 from safelight.devtools.fake_catalog import FakeCatalog
 from safelight.devtools.fake_plugin import FakePlugin
 from safelight.hub import Hub, HubServer
 from safelight.hub_client import HubClient
 from safelight.mcp_server import build_server
 from safelight.settings import Settings
+from safelight.upright import Plan
 
 pytestmark = pytest.mark.anyio
 
@@ -86,7 +89,20 @@ async def test_tool_list_and_read_only_annotations(safelight_home):
         "get_develop_settings",
         "list_catalog_items",
     }
-    assert tools["change_mask"].annotations.destructive_hint is True
+    destructive = {n for n, t in tools.items() if t.annotations.destructive_hint}
+    assert destructive == {
+        "auto_develop",
+        "change_mask",
+        "edit_keywords",
+        "export_photos",
+        "manage_collection",
+        "set_metadata",
+        "snapshot",
+    }
+    for tool in tools.values():  # some directories refuse tools with a missing hint
+        hints = tool.annotations
+        for hint in ("read_only", "destructive", "idempotent", "open_world"):
+            assert isinstance(getattr(hints, f"{hint}_hint"), bool), (tool.name, hint)
     for tool in tools.values():
         assert tool.description and len(tool.description) > 30, tool.name
 
@@ -238,3 +254,121 @@ async def test_search_filters_on_focal_length_after_the_search(safelight_home):
     found = result.structured_content
     assert found["total"] == 4
     assert all(p["focal_length_mm"] >= 50 for p in found["photos"])
+
+
+# -- straighten_photos --------------------------------------------------------------------
+
+EARLIER = {"PerspectiveVertical": 7, "PerspectiveRotate": -0.5, "CropTop": 0.01}
+
+
+def _plan():
+    guides = [(0.1, 0.1, 0.1, 0.9), (0.9, 0.1, 0.9, 0.9)]
+    return Plan(guides, np.eye(3), 0.0, 0.0, 0.0, 0.0, lines_found=2, lines_used=2)
+
+
+def _assert_put_back(photo):
+    assert {key: photo["settings"][key] for key in EARLIER} == EARLIER
+    assert photo["settings"]["PerspectiveUpright"] == 0
+
+
+async def test_straighten_puts_back_a_photo_without_lines(safelight_home, monkeypatch):
+    plans = iter([_plan(), None])
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: next(plans))
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        for photo in catalog.photos.values():
+            photo["settings"].update(EARLIER)
+        result = (await mcp.call_tool("straighten_photos", {})).structured_content["result"]
+        first, second = (catalog.photos[i] for i in catalog.selected)
+    assert [e["id"] for e in result["straightened"]] == ["FAKE-0001"]
+    assert first["settings"]["PerspectiveUpright"] == 5
+    assert first["settings"]["PerspectiveVertical"] == 0
+    assert result["not_straightened"][0]["put_back"] is True
+    _assert_put_back(second)
+
+
+async def test_straighten_puts_back_an_earlier_guided_upright(safelight_home, monkeypatch):
+    guided = {
+        "PerspectiveUpright": 5,
+        "UprightFourSegmentsCount": 2,
+        "UprightFourSegments_0": "0.1,0.1,0.1,0.9",
+        "UprightTransform_5": "1,0,0,0,1,0,0,0,1",
+    }
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: None)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        photo = catalog.photos["FAKE-0001"]
+        photo["settings"].update(guided)
+        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+    assert {key: photo["settings"][key] for key in guided} == guided
+
+
+async def test_straighten_puts_photos_back_after_an_error(safelight_home, monkeypatch):
+    def broken(*_, **__):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", broken)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        for photo in catalog.photos.values():
+            photo["settings"].update(EARLIER)
+        result = await mcp.call_tool("straighten_photos", {})
+        selected = [catalog.photos[i] for i in catalog.selected]
+    assert result.is_error
+    for photo in selected:
+        _assert_put_back(photo)
+
+
+async def test_straighten_puts_photos_back_when_cancelled(safelight_home, monkeypatch):
+    started = asyncio.Event()
+
+    async def stuck(*_, **__):
+        started.set()
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(mcp_server, "fetch_previews", stuck)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        for photo in catalog.photos.values():
+            photo["settings"].update(EARLIER)
+        call = asyncio.create_task(mcp.call_tool("straighten_photos", {}))
+        await started.wait()
+        selected = [catalog.photos[i] for i in catalog.selected]
+        assert selected[0]["settings"]["PerspectiveVertical"] == 0
+        call.cancel()
+        for _ in range(200):
+            if all(p["settings"]["PerspectiveVertical"] == 7 for p in selected):
+                break
+            await asyncio.sleep(0.02)
+    for photo in selected:
+        _assert_put_back(photo)
+
+
+async def test_straighten_asks_first_and_touches_nothing(safelight_home):
+    async with (
+        lightroom(safelight_home, threshold=1) as (catalog, _),
+        Client(build_server(HubClient(safelight_home)), mode="legacy") as mcp,
+    ):
+        before = {i: dict(p["settings"]) for i, p in catalog.photos.items()}
+        asked = (await mcp.call_tool("straighten_photos", {})).structured_content
+        after = {i: dict(p["settings"]) for i, p in catalog.photos.items()}
+    assert asked["state"] == "confirmation_required"
+    assert after == before
+
+
+async def test_straighten_refuses_a_zero_threshold(safelight_home):
+    async with (
+        lightroom(safelight_home, threshold=0) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        result = await mcp.call_tool("straighten_photos", {})
+    assert result.is_error
+    assert "PerspectiveUpright" not in catalog.photos["FAKE-0001"]["settings"]

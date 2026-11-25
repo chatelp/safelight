@@ -64,6 +64,21 @@ RESET_SETTINGS: dict[str, Any] = {
     "CropAngle": 0,
 }
 
+# Where Lightroom keeps an Upright correction, besides the settings above.
+UPRIGHT_PREFIXES = ("UprightFourSegments_", "UprightTransform_")
+
+
+def geometry_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    """The transform, Upright and crop of a photo, to put them back as they were."""
+    return {
+        **RESET_SETTINGS,
+        **{
+            key: value
+            for key, value in settings.items()
+            if key in RESET_SETTINGS or key.startswith(UPRIGHT_PREFIXES)
+        },
+    }
+
 
 @dataclass
 class Line:
