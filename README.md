@@ -65,6 +65,11 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Privacy
+
+Safelight runs on your Mac, with no account and no telemetry. What its tools read goes to
+the AI client that calls them. See [PRIVACY.md](PRIVACY.md).
+
 ## Credits
 
 Safelight started as a fork of
