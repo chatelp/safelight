@@ -261,5 +261,8 @@ Found while building the plugin commands (lot L3):
   and neither does choosing the Guided mode again with `LrDevelopController.setValue` in
   Develop. Writing the matrix does work: Lightroom renders it. Safelight therefore
   computes the matrix itself (`src/safelight/upright.py`).
+- As soon as guides are touched in Lightroom, it replaces the matrix with its own: exact for
+  the guides, but not a camera rotation. With two vertical guides only it shears the image
+  (horizontals stay as they are), so right angles change by the roll of the photo.
 - Not checked yet: the coordinate frame of guides on photos with a non-default
   `orientation`; Safelight skips those.

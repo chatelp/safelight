@@ -643,6 +643,20 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 "Guided Upright with four lines. verticals: vertical lines only."
             ),
         ] = "verticals_and_frontal",
+        label: Annotated[
+            Literal["red", "yellow", "green", "blue", "purple"] | None,
+            Field(
+                description="Color label for the photos this changes, so the user can find "
+                "and check them. A photo that already has another label keeps it."
+            ),
+        ] = None,
+        replace_existing_upright: Annotated[
+            bool,
+            Field(
+                description="Also redo photos that already have an Upright correction, by "
+                "hand or by an earlier run. Only when the user asks for exactly that."
+            ),
+        ] = False,
         max_photos: Annotated[int, Field(ge=1, le=500)] = 200,
         confirmation_token: ConfirmationToken = None,
     ) -> ActionResult:
@@ -654,8 +668,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         the straight lines on a fresh preview, and writes up to four Upright guides with
         the matching correction. The correction is a rotation of the camera: prints and
         walls keep their proportions. Corners left empty by the correction are not
-        cropped. Rotated photos are skipped. A photo that cannot be straightened gets its
-        earlier transform and crop back. Check the result with contact_sheet, and look
+        cropped. Rotated photos are skipped, and so are photos that already have an Upright
+        correction: it may be the user's own work. A photo that cannot be straightened gets
+        its earlier transform and crop back. Check the result with contact_sheet, and look
         closer at photos listed with warnings: the user can move the guides in
         Lightroom (Transform tool) to adjust one.
         """
@@ -670,18 +685,42 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             # Each photo gets its own correction, so each would need its own approval.
             raise ToolError("straighten_photos needs a confirmation threshold of at least 1.")
         rotated: list[dict[str, Any]] = []
+        already: list[dict[str, Any]] = []
         upright_photos = []
         before: dict[str, dict[str, Any]] = {}  # geometry to put back if it goes wrong
         for photo in photos:
             current = await runner.read(ctx, "develop.get", {"uuids": [photo["uuid"]]})
             settings = current.get("settings") or {}
-            if settings.get("orientation") in (None, "", "AB"):
+            entry = {"id": photo["uuid"], "file": photo.get("file_name")}
+            if settings.get("PerspectiveUpright") and not replace_existing_upright:
+                already.append(entry)
+            elif settings.get("orientation") in (None, "", "AB"):
                 upright_photos.append(photo)
                 before[photo["uuid"]] = geometry_settings(settings)
             else:
-                rotated.append({"id": photo["uuid"], "file": photo.get("file_name")})
+                rotated.append(entry)
         if not upright_photos:
-            raise ToolError("All these photos are rotated; Safelight cannot straighten them yet.")
+            raise ToolError(
+                f"Nothing to straighten: {len(already)} photos already have an Upright "
+                f"correction and {len(rotated)} are rotated, which is not supported yet."
+            )
+
+        async def set_label(photo: dict[str, Any]) -> str:
+            """Labels a changed photo; returns what its label is now, or what went wrong."""
+            if photo.get("label") not in (None, label):
+                return f"kept {photo['label']}"
+            reply = await runner.settle(
+                await hub_client.run(
+                    "metadata.set",
+                    {"uuids": [photo["uuid"]], "fields": {"label": label}},
+                    wait_s=30,
+                    client=_client_name(ctx),
+                )
+            )
+            failed = (reply.get("result") or {}).get("failures")
+            return (
+                str(label) if reply.get("state") == JobState.SUCCEEDED and not failed else "failed"
+            )
 
         async def apply(photo_id: str, settings: dict[str, Any], name: str) -> str | None:
             """Write settings on one photo; returns what went wrong, or None."""
@@ -764,7 +803,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                     error = await apply(photo_id, plan.settings(), "Safelight: Straighten")
                     if error is None:
                         pending.discard(photo_id)
-                        done.append({**entry, **plan.as_dict()})
+                        labelled = {"label": await set_label(photo)} if label else {}
+                        done.append({**entry, **plan.as_dict(), **labelled})
                         continue
                     reason = f"Lightroom refused it: {error}"
                 restored = await put_back(photo_id)
@@ -787,11 +827,13 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                     "not_straightened": len(not_done),
                     "to_review": len(to_review),
                     "rotated_skipped": len(rotated),
+                    "already_corrected_skipped": len(already),
                     "stacked_frames_skipped": skipped_stacked,
                 },
                 "straightened": done,
                 "not_straightened": not_done,
                 "rotated_skipped": rotated,
+                "already_corrected_skipped": already,
                 "notes": [
                     f"each photo has a snapshot '{STRAIGHTEN_SNAPSHOT}' with its settings "
                     "from before",

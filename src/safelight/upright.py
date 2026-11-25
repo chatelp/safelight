@@ -19,7 +19,8 @@ Lines are found on a preview rendered without any transform:
 
 Up to four of the lines kept become the guides: the longest vertical on each side and
 the longest horizontal at the top and at the bottom. The matrix is fitted to those
-guides, so moving a guide in Lightroom recomputes a consistent correction.
+guides. Moving a guide in Lightroom replaces it with Lightroom's own, which is exact for
+the guides but not a rotation (see docs/LIGHTROOM_API.md).
 """
 
 from __future__ import annotations
