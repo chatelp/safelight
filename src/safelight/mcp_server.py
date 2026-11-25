@@ -13,6 +13,7 @@ import base64
 import time
 from typing import Annotated, Any, Literal
 
+import anyio
 from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
@@ -24,7 +25,7 @@ from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
 from .search import PhotoFilters, build_search, has_post_filters, matches_post_filters
-from .upright import RESET_SETTINGS, Plan, plan_from_jpeg
+from .upright import RESET_SETTINGS, Plan, geometry_settings, plan_from_jpeg
 
 STRAIGHTEN_SNAPSHOT = "Before Safelight straighten"
 
@@ -56,9 +57,26 @@ and stop them with safelight_cancel_job.
 Safelight is not affiliated with Adobe.
 """
 
-READ_ONLY = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
-CHANGES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
-DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
+
+def _hints(*, read_only: bool, destructive: bool, idempotent: bool) -> ToolAnnotations:
+    """All four MCP hints, always explicit: some clients and directories require them.
+
+    Destructive means information can be lost that Lightroom's History panel does not
+    keep (files, captions, keywords, snapshots...) or that all edits are reset. No tool
+    reaches outside this Mac."""
+    return ToolAnnotations(
+        readOnlyHint=read_only,
+        destructiveHint=destructive,
+        idempotentHint=idempotent,
+        openWorldHint=False,
+    )
+
+
+READ_ONLY = _hints(read_only=True, destructive=False, idempotent=True)
+CHANGES = _hints(read_only=False, destructive=False, idempotent=False)
+CHANGES_ONCE = _hints(read_only=False, destructive=False, idempotent=True)
+DESTRUCTIVE = _hints(read_only=False, destructive=True, idempotent=False)
+DESTRUCTIVE_ONCE = _hints(read_only=False, destructive=True, idempotent=True)
 
 PhotoIds = Annotated[
     list[str] | None,
@@ -200,7 +218,7 @@ class Runner:
             reply = await self._ask_user(ctx, command, params, reply, name)
             if isinstance(reply, ActionResult):
                 return reply
-        return self._outcome(reply)
+        return self.outcome(reply)
 
     async def _ask_user(
         self, ctx: Context | None, command: str, params: dict[str, Any], reply: dict, name: str
@@ -221,7 +239,13 @@ class Runner:
             )
         return ActionResult(state="declined", message="The user did not approve this change.")
 
-    def _outcome(self, reply: dict[str, Any]) -> ActionResult:
+    async def settle(self, reply: dict[str, Any]) -> dict[str, Any]:
+        """Waits until a job that was still running is over."""
+        while reply.get("state") in (JobState.RUNNING, JobState.QUEUED) and reply.get("job_id"):
+            reply = await self.client.job(reply["job_id"], wait_s=30)
+        return reply
+
+    def outcome(self, reply: dict[str, Any]) -> ActionResult:
         state = reply.get("state")
         if state == JobState.SUCCEEDED:
             return ActionResult(state="succeeded", result=reply.get("result"))
@@ -424,7 +448,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         """State, progress and result of a job that another tool reported as running."""
         return JobResult.model_validate(await hub_client.job(job_id, wait_s))
 
-    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, idempotentHint=True))
+    @server.tool(annotations=CHANGES_ONCE)
     async def safelight_cancel_job(job_id: str) -> JobResult:
         """Stop a running job. It stops at its next step; work already done is kept."""
         return JobResult.model_validate(await hub_client.cancel(job_id))
@@ -631,8 +655,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         the straight lines on a fresh preview, and writes up to four Upright guides with
         the matching correction. The correction is a rotation of the camera: prints and
         walls keep their proportions. Corners left empty by the correction are not
-        cropped. Rotated photos are skipped. Check the result with contact_sheet, and
-        look closer at photos listed with warnings: the user can move the guides in
+        cropped. Rotated photos are skipped. A photo that cannot be straightened gets its
+        earlier transform and crop back. Check the result with contact_sheet, and look
+        closer at photos listed with warnings: the user can move the guides in
         Lightroom (Transform tool) to adjust one.
         """
         photos, _ = await list_photos(
@@ -641,75 +666,119 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         photos, skipped_stacked = top_of_stacks(photos)
         if not photos:
             raise ToolError("No photos to straighten.")
+        status = await hub_client.status()
+        if (status.get("settings") or {}).get("confirm_threshold") == 0:
+            # Each photo gets its own correction, so each would need its own approval.
+            raise ToolError("straighten_photos needs a confirmation threshold of at least 1.")
         rotated: list[dict[str, Any]] = []
         upright_photos = []
+        before: dict[str, dict[str, Any]] = {}  # geometry to put back if it goes wrong
         for photo in photos:
-            current = await runner.read(
-                ctx, "develop.get", {"uuids": [photo["uuid"]], "keys": ["orientation"]}
-            )
-            orientation = (current.get("settings") or {}).get("orientation")
-            if orientation in (None, "", "AB"):
+            current = await runner.read(ctx, "develop.get", {"uuids": [photo["uuid"]]})
+            settings = current.get("settings") or {}
+            if settings.get("orientation") in (None, "", "AB"):
                 upright_photos.append(photo)
+                before[photo["uuid"]] = geometry_settings(settings)
             else:
                 rotated.append({"id": photo["uuid"], "file": photo.get("file_name")})
         if not upright_photos:
             raise ToolError("All these photos are rotated; Safelight cannot straighten them yet.")
-        ids = [photo["uuid"] for photo in upright_photos]
-        reset = await runner.change(
-            ctx,
-            "develop.apply",
-            {
-                "uuids": ids,
-                "settings": RESET_SETTINGS,
-                "history_name": "Safelight: Straighten",
-                "snapshot": STRAIGHTEN_SNAPSHOT,
-            },
-            confirmation_token,
-        )
-        if reset.state != "succeeded":
-            return reset
 
-        async def report(done: int, count: int) -> None:
-            await ctx.report_progress(done, 2 * count, f"Rendered {done} of {count} previews")
-
-        previews = await fetch_previews(hub_client, ctx, upright_photos, 2048, report)
-        frontal = guides == "verticals_and_frontal"
-
-        def compute() -> list[Plan | None]:
-            return [
-                plan_from_jpeg(jpeg, photo, frontal_horizontals=frontal) if jpeg else None
-                for photo, jpeg in zip(upright_photos, previews, strict=True)
-            ]
-
-        plans = await asyncio.to_thread(compute)
-        done: list[dict[str, Any]] = []
-        not_done: list[dict[str, Any]] = []
-        for index, (photo, jpeg, plan) in enumerate(
-            zip(upright_photos, previews, plans, strict=True)
-        ):
-            await ctx.report_progress(
-                len(upright_photos) + index, 2 * len(upright_photos), "Straightening"
-            )
-            entry = {"id": photo["uuid"], "file": photo.get("file_name")}
-            if plan is None:
-                reason = "no preview" if not jpeg else "no usable straight line found"
-                not_done.append({**entry, "reason": reason})
-                continue
-            reply = await hub_client.run(
-                "develop.apply",
-                {
-                    "uuids": [photo["uuid"]],
-                    "settings": plan.settings(),
-                    "history_name": "Safelight: Straighten",
-                },
-                wait_s=30,
-                client=_client_name(ctx),
+        async def apply(photo_id: str, settings: dict[str, Any], name: str) -> str | None:
+            """Write settings on one photo; returns what went wrong, or None."""
+            reply = await runner.settle(
+                await hub_client.run(
+                    "develop.apply",
+                    {"uuids": [photo_id], "settings": settings, "history_name": name},
+                    wait_s=30,
+                    client=_client_name(ctx),
+                )
             )
             if reply.get("state") != JobState.SUCCEEDED:
-                error = (reply.get("error") or {}).get("message") or reply.get("state")
-                not_done.append({**entry, "reason": f"Lightroom refused it: {error}"})
-                continue
-            done.append({**entry, **plan.as_dict()})
+                return str((reply.get("error") or {}).get("message") or reply.get("state"))
+            failures = (reply.get("result") or {}).get("failures") or []
+            return str(failures[0].get("error")) if failures else None
+
+        async def put_back(photo_id: str) -> bool:
+            settings = before[photo_id]
+            return await apply(photo_id, settings, "Safelight: Straighten (put back)") is None
+
+        ids = [photo["uuid"] for photo in upright_photos]
+        # From the reset on, photos have lost their geometry: whatever happens (no line
+        # found, an error, the AI client cancelling), those not straightened get it back.
+        pending = set(ids)
+        if (status.get("settings") or {}).get("read_only"):
+            pending.clear()  # the hub refuses the reset: nothing to put back
+        try:
+            reset = await runner.change(
+                ctx,
+                "develop.apply",
+                {
+                    "uuids": ids,
+                    "settings": RESET_SETTINGS,
+                    "history_name": "Safelight: Straighten",
+                    "snapshot": STRAIGHTEN_SNAPSHOT,
+                },
+                confirmation_token,
+            )
+            if reset.state in ("confirmation_required", "declined"):
+                pending.clear()
+                return reset
+            if reset.state == "running" and reset.job_id:
+                reply = await runner.settle({"state": "running", "job_id": reset.job_id})
+                reset = runner.outcome(reply)
+            if reset.state != "succeeded":
+                return reset
+            reset_failures = {
+                failure.get("uuid"): failure.get("error")
+                for failure in (reset.result or {}).get("failures") or []
+            }
+
+            async def report(done: int, count: int) -> None:
+                await ctx.report_progress(done, 2 * count, f"Rendered {done} of {count} previews")
+
+            previews = await fetch_previews(hub_client, ctx, upright_photos, 2048, report)
+            frontal = guides == "verticals_and_frontal"
+
+            def compute() -> list[Plan | None]:
+                return [
+                    plan_from_jpeg(jpeg, photo, frontal_horizontals=frontal) if jpeg else None
+                    for photo, jpeg in zip(upright_photos, previews, strict=True)
+                ]
+
+            plans = await asyncio.to_thread(compute)
+            done: list[dict[str, Any]] = []
+            not_done: list[dict[str, Any]] = []
+            for index, (photo, jpeg, plan) in enumerate(
+                zip(upright_photos, previews, plans, strict=True)
+            ):
+                await ctx.report_progress(
+                    len(upright_photos) + index, 2 * len(upright_photos), "Straightening"
+                )
+                photo_id = photo["uuid"]
+                entry = {"id": photo_id, "file": photo.get("file_name")}
+                if photo_id in reset_failures:
+                    reason = f"Lightroom refused it: {reset_failures[photo_id]}"
+                elif plan is None:
+                    reason = "no preview" if not jpeg else "no usable straight line found"
+                else:
+                    error = await apply(photo_id, plan.settings(), "Safelight: Straighten")
+                    if error is None:
+                        pending.discard(photo_id)
+                        done.append({**entry, **plan.as_dict()})
+                        continue
+                    reason = f"Lightroom refused it: {error}"
+                restored = await put_back(photo_id)
+                pending.discard(photo_id)
+                not_done.append({**entry, "reason": reason, "put_back": restored})
+        finally:
+            if pending:
+                with anyio.CancelScope(shield=True):
+                    failed_in_a_row = 0
+                    for photo_id in [i for i in ids if i in pending]:
+                        failed_in_a_row = 0 if await put_back(photo_id) else failed_in_a_row + 1
+                        if failed_in_a_row == 2:
+                            break  # Lightroom is gone or busy: the snapshots remain
         to_review = [entry["id"] for entry in done if entry.get("warnings")]
         return ActionResult(
             state="succeeded",
@@ -791,7 +860,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             params["history_name"] = history_name
         return await runner.change(ctx, "develop.apply", params, confirmation_token)
 
-    @server.tool(annotations=CHANGES)
+    @server.tool(annotations=CHANGES_ONCE)
     async def copy_develop_settings(
         ctx: Context,
         from_photo_id: str,
@@ -809,7 +878,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             params["keys"] = keys
         return await runner.change(ctx, "develop.copy", params, confirmation_token)
 
-    @server.tool(annotations=CHANGES)
+    @server.tool(annotations=DESTRUCTIVE)
     async def auto_develop(
         ctx: Context,
         action: Annotated[
@@ -931,7 +1000,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
 
     # -- metadata, keywords, organization ---------------------------------------------------
 
-    @server.tool(annotations=CHANGES)
+    @server.tool(annotations=DESTRUCTIVE_ONCE)
     async def set_metadata(
         ctx: Context,
         photo_ids: PhotoIds = None,
@@ -987,7 +1056,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         params = {**_targets(photo_ids, scope), "fields": fields}
         return await runner.change(ctx, "metadata.set", params, confirmation_token)
 
-    @server.tool(annotations=CHANGES)
+    @server.tool(annotations=DESTRUCTIVE_ONCE)
     async def edit_keywords(
         ctx: Context,
         add: Annotated[
@@ -1119,7 +1188,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             ctx, "photos.rotate", {**targets, "direction": direction}, confirmation_token
         )
 
-    @server.tool(annotations=CHANGES)
+    @server.tool(annotations=DESTRUCTIVE)
     async def export_photos(
         ctx: Context,
         destination: Annotated[str, Field(description="Absolute folder path")],
