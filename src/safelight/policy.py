@@ -4,7 +4,8 @@
 - mutating commands are refused in read-only mode;
 - mutating commands that support a dry run are first simulated by the plugin; past the
   confirmation threshold the hub asks for confirmation instead of running them;
-- destructive commands always need confirmation.
+- destructive commands always need confirmation, and so does an export that replaces
+  existing files (`if_exists: overwrite`).
 
 Unknown commands are treated as mutating, so a new command is never less protected than
 an old one by accident. tests/test_policy.py checks that every command the plugin
@@ -13,7 +14,8 @@ registers is listed here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -21,6 +23,8 @@ class CommandPolicy:
     mutating: bool = True
     destructive: bool = False
     supports_dry_run: bool = False
+    # Why it always needs confirmation, told to the user (destructive commands only).
+    reason: str | None = None
 
 
 READ_ONLY = CommandPolicy(mutating=False)
@@ -79,13 +83,26 @@ DEFAULT_POLICIES: dict[str, CommandPolicy] = {
 }
 
 
-def policy_for(command: str, policies: dict[str, CommandPolicy] | None = None) -> CommandPolicy:
+def policy_for(
+    command: str,
+    policies: dict[str, CommandPolicy] | None = None,
+    params: dict[str, Any] | None = None,
+) -> CommandPolicy:
     table = DEFAULT_POLICIES if policies is None else policies
     if command in table:
-        return table[command]
-    if command.startswith(READ_ONLY_PREFIXES) or command in READ_ONLY_COMMANDS:
+        policy = table[command]
+    elif command.startswith(READ_ONLY_PREFIXES) or command in READ_ONLY_COMMANDS:
         return READ_ONLY
-    return CommandPolicy()
+    else:
+        policy = CommandPolicy()
+    if command == "export.photos" and (params or {}).get("if_exists") == "overwrite":
+        # Files on disk replaced by an export cannot be got back from Lightroom.
+        return replace(
+            policy,
+            destructive=True,
+            reason="This export replaces files that already exist in the destination folder.",
+        )
+    return policy
 
 
 def is_classified(command: str) -> bool:

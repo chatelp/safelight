@@ -231,6 +231,18 @@ async def test_export_photos(safelight_home):
         assert (await mcp.call_tool("export_photos", {"destination": "out"})).is_error
 
 
+async def test_an_export_that_overwrites_files_needs_approval(safelight_home):
+    async with session(safelight_home) as (catalog, _call, mcp):
+        args = {"destination": "/tmp/out", "photo_ids": [TWO], "if_exists": "overwrite"}
+        asked = (await mcp.call_tool("export_photos", args)).structured_content
+        assert asked["state"] == "confirmation_required" and catalog.exports == []
+        assert "replaces files" in asked["confirmation"]["reason"]
+        token = asked["confirmation"]["token"]
+        done = await mcp.call_tool("export_photos", {**args, "confirmation_token": token})
+        assert done.structured_content["state"] == "succeeded"
+        assert catalog.exports[-1]["if_exists"] == "overwrite"
+
+
 # -- jobs -----------------------------------------------------------------------------------
 
 

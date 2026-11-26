@@ -36,7 +36,7 @@ photos selected in Lightroom (`scope: "selected"`, the default) or the active ph
 | `list_catalog_items` | read-only | Collections, keywords or develop presets, optionally filtered by name. |
 | `manage_collection` | change, delete | Create collections, smart collections and sets; add, remove or list photos; delete a collection. |
 | `organize_photos` | change | Rotate photos or create virtual copies. |
-| `export_photos` | change | Export with format, size, quality, color space, sharpening and metadata options; returns file paths. |
+| `export_photos` | change | Export with format, size, quality, color space, sharpening and metadata options; returns file paths. Existing files are kept (renamed or skipped) unless `if_exists` is `overwrite`, which always needs the user's approval. |
 
 ## Approvals
 

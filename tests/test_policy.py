@@ -30,3 +30,11 @@ def test_unknown_commands_are_treated_as_mutating():
     assert policy_for("brand.new_thing").mutating is True
     assert policy_for("photos.get").mutating is False
     assert policy_for("collections.delete").destructive is True
+
+
+def test_an_export_that_overwrites_files_is_always_confirmed():
+    assert policy_for("export.photos").destructive is False
+    assert policy_for("export.photos", params={"if_exists": "rename"}).destructive is False
+    overwrite = policy_for("export.photos", params={"if_exists": "overwrite"})
+    assert overwrite.destructive and overwrite.supports_dry_run
+    assert "replaces files" in overwrite.reason
