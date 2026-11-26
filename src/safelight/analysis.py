@@ -329,7 +329,7 @@ def groups(
             continue
         ranked = sorted(group, key=lambda pid: _keeper_score(by_id[pid], stats[pid], group, stats))
         best = ranked[-1]
-        by_eye = _close_call(group, stats)
+        by_eye = _close_call(best, group, stats)
         flagged = by_id[best].get("pick") == 1 or int(by_id[best].get("rating") or 0) > 0
         why = _why(best, group, stats)
         if by_eye and not flagged:
@@ -374,16 +374,20 @@ def _keeper_score(
 CLOSE_FOCUS = 0.75
 
 
-def _close_call(group: list[str], stats: dict[str, ImageStats]) -> bool:
-    exposed = [
-        stats[pid].focus
-        for pid in group
-        if stats[pid].clipped_highlights <= 0.05 and stats[pid].clipped_shadows <= 0.2
-    ]
-    if len(exposed) < 2:
+def _well_exposed(s: ImageStats) -> bool:
+    return s.clipped_highlights <= 0.05 and s.clipped_shadows <= 0.2
+
+
+def _close_call(best: str, group: list[str], stats: dict[str, ImageStats]) -> bool:
+    """Whether another well exposed frame is about as sharp as the chosen one (itself well
+    exposed): sharpness then does not tell them apart."""
+    chosen = stats[best]
+    if not _well_exposed(chosen) or not chosen.focus > 0:
         return False
-    top, second = sorted(exposed, reverse=True)[:2]
-    return top > 0 and second >= CLOSE_FOCUS * top
+    return any(
+        pid != best and _well_exposed(stats[pid]) and stats[pid].focus >= CLOSE_FOCUS * chosen.focus
+        for pid in group
+    )
 
 
 def _why(best: str, group: list[str], stats: dict[str, ImageStats]) -> str:

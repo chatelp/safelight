@@ -107,6 +107,12 @@ def test_equally_sharp_frames_are_left_to_the_eye():
     clear = found[frozenset({"c", "d"})]
     assert "choose_by_eye" not in clear and clear["why_best"] == "sharpest frame of the group"
 
+    # A much sharper frame with blown highlights may still be chosen: not a close call.
+    photos = [{"uuid": u, "captured_at": f"2026-11-20T10:00:0{i}"} for i, u in enumerate("xyz")]
+    stats = {"x": _stats(100, 0), "y": _stats(90, 0), "z": _stats(200, 0, highlights=0.06)}
+    (group,) = groups(photos, stats)
+    assert group["best_photo_id"] == "z" and "choose_by_eye" not in group
+
 
 def test_picked_frame_wins_a_close_call():
     photos = [
