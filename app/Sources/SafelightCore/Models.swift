@@ -37,14 +37,54 @@ public struct HubStatus: Decodable, Sendable, Equatable {
     public var settings: HubSettings
 }
 
-/// User settings of the hub (`GET`/`PUT /v1/settings`).
+/// User settings of the hub (`GET`/`PUT /v1/settings`): the user's stable choices, which
+/// every AI client follows without being told.
 public struct HubSettings: Codable, Sendable, Equatable {
+    /// A lens Lightroom names wrongly (adapted or manual lens), with its real name.
+    public struct LensName: Codable, Sendable, Equatable, Hashable {
+        public var lightroom: String
+        public var real: String
+
+        public init(lightroom: String, real: String) {
+            self.lightroom = lightroom
+            self.real = real
+        }
+    }
+
+    public static let labels = ["none", "red", "yellow", "green", "blue", "purple"]
+
     public var confirmThreshold: Int
     public var readOnly: Bool
+    /// Color label for photos Safelight changes ("none": no label).
+    public var changeLabel: String
+    /// Whether Safelight saves a snapshot before changing a photo's geometry.
+    public var snapshots: Bool
+    public var lensNames: [LensName]
 
-    public init(confirmThreshold: Int = 50, readOnly: Bool = false) {
+    public init(
+        confirmThreshold: Int = 50,
+        readOnly: Bool = false,
+        changeLabel: String = "purple",
+        snapshots: Bool = true,
+        lensNames: [LensName] = []
+    ) {
         self.confirmThreshold = confirmThreshold
         self.readOnly = readOnly
+        self.changeLabel = changeLabel
+        self.snapshots = snapshots
+        self.lensNames = lensNames
+    }
+
+    // Hubs before 0.2 send only the first two settings.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            confirmThreshold: try container.decode(Int.self, forKey: .confirmThreshold),
+            readOnly: try container.decode(Bool.self, forKey: .readOnly),
+            changeLabel: try container.decodeIfPresent(String.self, forKey: .changeLabel) ?? "purple",
+            snapshots: try container.decodeIfPresent(Bool.self, forKey: .snapshots) ?? true,
+            lensNames: try container.decodeIfPresent([LensName].self, forKey: .lensNames) ?? []
+        )
     }
 }
 

@@ -21,8 +21,8 @@ pytestmark = pytest.mark.anyio
 
 
 @contextlib.asynccontextmanager
-async def lightroom(home, threshold=50):
-    hub = Hub(settings=Settings(confirm_threshold=threshold))
+async def lightroom(home, threshold=50, **settings):
+    hub = Hub(settings=Settings(confirm_threshold=threshold, **settings))
     server = HubServer(home, port=0, hub=hub)
     task = asyncio.create_task(server.serve())
     while not (server.port and (home / "hub.json").exists()):
@@ -426,13 +426,14 @@ async def test_straighten_lines_then_chosen_lines(safelight_home, monkeypatch):
         assert "1. vertical" in text and "3. horizontal" in text
         assert text.count("[guide]") == 2
 
+        photo = catalog.photos["FAKE-0001"]
+        assert photo["label"] == "purple"  # the default color for changed photos
         args = {"chosen_lines": {"FAKE-0001": [1, 2, 3, 4]}, "label": "yellow"}
         result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
-        photo = catalog.photos["FAKE-0001"]
         assert [e["lines"] for e in result["straightened"]] == [[1, 2, 3, 4]]
         assert result["straightened"][0]["model"] == "exact"
+        assert result["straightened"][0]["label"] == "kept purple"
         assert photo["settings"]["UprightFourSegmentsCount"] == 4
-        assert photo["label"] == "yellow"
 
         # The new choice is remembered, and can be changed again.
         again = await mcp.call_tool("straighten_lines", {"photo_ids": ["FAKE-0001"]})
@@ -516,3 +517,49 @@ async def test_straighten_refuses_a_zero_threshold(safelight_home):
         result = await mcp.call_tool("straighten_photos", {})
     assert result.is_error
     assert "PerspectiveUpright" not in catalog.photos["FAKE-0001"]["settings"]
+
+
+# -- the user's preferences -----------------------------------------------------------------
+
+
+async def test_straighten_follows_color_and_snapshot_preferences(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: _plan())
+    async with (
+        lightroom(safelight_home, change_label="none", snapshots=False) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        result = await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        photo = catalog.photos["FAKE-0001"]
+        assert photo["label"] is None and photo["snapshots"] == []
+        assert "no snapshot" in " ".join(result.structured_content["result"]["notes"])
+        # Asking for a color still works when the default is none.
+        args = {"photo_ids": ["FAKE-0002"], "label": "green"}
+        await mcp.call_tool("straighten_photos", args)
+        assert catalog.photos["FAKE-0002"]["label"] == "green"
+
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0003"]})
+        photo = catalog.photos["FAKE-0003"]
+        assert photo["label"] == "purple"
+        assert [s["name"] for s in photo["snapshots"]] == [mcp_server.STRAIGHTEN_SNAPSHOT]
+
+
+async def test_real_lens_names_are_shown_and_searchable(safelight_home):
+    names = [{"lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"}]
+    async with (
+        lightroom(safelight_home, lens_names=names) as (_, _client),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        shown = await mcp.call_tool("get_photos", {"photo_ids": ["FAKE-0008", "FAKE-0001"]})
+        photos = shown.structured_content["photos"]
+        assert photos[0]["lens"] == "Canon TS-E 17mm f/4L"
+        assert photos[0]["lens_in_lightroom"] == "DT 17mm F4 SAM"
+        assert photos[1]["lens"] == "FE 24-70mm F4 ZA OSS" and "lens_in_lightroom" not in photos[1]
+        for asked in ("Canon TS-E 17mm f/4L", "ts-e 17", "DT 17mm F4 SAM"):
+            found = await mcp.call_tool("search_photos", {"filters": {"lens": asked}})
+            assert [p["uuid"] for p in found.structured_content["photos"]] == ["FAKE-0008"], asked
+        status = (await mcp.call_tool("safelight_status", {})).structured_content
+        assert status["change_label"] == "purple" and status["snapshots"] is True

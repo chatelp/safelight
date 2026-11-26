@@ -48,7 +48,10 @@ It draws the popover with sample data in light and dark appearance. Native contr
   (app closed or not installed) is replaced by the app's once it has no job running.
 - **Popover**: Lightroom version and catalog, AI clients seen in the last 15 minutes,
   the last activity in plain words, read-only mode, confirmation threshold, launch at
-  login, restart hub, hub log.
+  login, restart hub, preferences, hub log.
+- **Preferences window**: color label for photos Safelight changes, snapshot before a
+  geometry change, real names of lenses Lightroom names wrongly. Check its layout with
+  `Safelight --render-preferences /tmp/prefs.png`.
 - **Set Up menu**: registers Safelight with Claude Desktop, Claude Code, Cursor and
   Codex (each configuration file is backed up first), and installs the Lightroom plugin
   into Lightroom's Modules folder.

@@ -52,10 +52,23 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
 }
 
 @Test func settingsAreSentInSnakeCase() throws {
-    let data = try HubAPI.encoder.encode(HubSettings(confirmThreshold: 20, readOnly: true))
+    let lens = HubSettings.LensName(lightroom: "DT 17mm F4 SAM", real: "Canon TS-E 17mm f/4L")
+    let settings = HubSettings(confirmThreshold: 20, readOnly: true, changeLabel: "none", snapshots: false, lensNames: [lens])
+    let data = try HubAPI.encoder.encode(settings)
     let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
     #expect(object?["confirm_threshold"] as? Int == 20)
     #expect(object?["read_only"] as? Bool == true)
+    #expect(object?["change_label"] as? String == "none")
+    #expect(object?["snapshots"] as? Bool == false)
+    let names = object?["lens_names"] as? [[String: String]]
+    #expect(names == [["lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"]])
+    #expect(try decode(HubSettings.self, String(decoding: data, as: UTF8.self)) == settings)
+}
+
+@Test func settingsFromAnOlderHubGetDefaults() throws {
+    let settings = try decode(HubSettings.self, #"{"confirm_threshold": 5, "read_only": false}"#)
+    #expect(settings == HubSettings(confirmThreshold: 5))
+    #expect(settings.changeLabel == "purple" && settings.snapshots)
 }
 
 // MARK: AI client configuration

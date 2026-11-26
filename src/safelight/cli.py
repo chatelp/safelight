@@ -84,6 +84,18 @@ def main(argv: list[str] | None = None) -> int:
     settings = sub.add_parser("settings", help="show or change settings")
     settings.add_argument("--confirm-threshold", type=int, help="photos before asking to confirm")
     settings.add_argument("--read-only", type=_on_off, help="on or off")
+    settings.add_argument(
+        "--change-label",
+        choices=["red", "yellow", "green", "blue", "purple", "none"],
+        help="color label for photos Safelight changes",
+    )
+    settings.add_argument("--snapshots", type=_on_off, help="snapshot before geometry changes")
+    settings.add_argument(
+        "--lens-name",
+        action="append",
+        metavar="LIGHTROOM=REAL",
+        help="real name of a lens Lightroom names wrongly (repeat; replaces the list)",
+    )
 
     bench = sub.add_parser("bench", help="measure the round trip to Lightroom")
     bench.add_argument("-n", type=int, default=50)
@@ -151,6 +163,15 @@ def main(argv: list[str] | None = None) -> int:
             changes["confirm_threshold"] = args.confirm_threshold
         if args.read_only is not None:
             changes["read_only"] = args.read_only
+        if args.change_label is not None:
+            changes["change_label"] = args.change_label
+        if args.snapshots is not None:
+            changes["snapshots"] = args.snapshots
+        if args.lens_name is not None:
+            pairs = [item.partition("=") for item in args.lens_name]
+            if any(not sep for _, sep, _ in pairs):
+                parser.error("--lens-name takes LIGHTROOM=REAL")
+            changes["lens_names"] = [{"lightroom": a, "real": b} for a, _, b in pairs]
         _print_json(asyncio.run(client.settings(changes or None)))
         return 0
 

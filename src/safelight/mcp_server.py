@@ -27,6 +27,7 @@ from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
 from .search import PhotoFilters, build_search, has_post_filters, matches_post_filters
+from .settings import Settings
 from .upright import (
     DISAGREE_DEG,
     RESET_SETTINGS,
@@ -139,6 +140,14 @@ class StatusResult(BaseModel):
     confirm_threshold: int | None = Field(
         default=None, description="Changes touching more photos than this need approval."
     )
+    change_label: str | None = Field(
+        default=None,
+        description="Color label the user wants on photos Safelight changes (none: no label).",
+    )
+    snapshots: bool | None = Field(
+        default=None,
+        description="Whether the user wants a snapshot before Safelight changes a geometry.",
+    )
 
 
 class JobResult(BaseModel):
@@ -205,6 +214,14 @@ class Runner:
 
     def __init__(self, client: HubClient) -> None:
         self.client = client
+
+    async def preferences(self) -> Settings:
+        """The user's settings, from the hub (defaults if it cannot answer)."""
+        settings = Settings()
+        with contextlib.suppress(HubUnavailable):
+            data = await self.client.settings()
+            settings.update(data if isinstance(data, dict) else {}, strict=False)
+        return settings
 
     async def read(self, ctx: Context | None, command: str, params: dict[str, Any]) -> Any:
         reply = await self.client.run(command, params, wait_s=60, client=_client_name(ctx))
@@ -313,6 +330,8 @@ async def collect_status(client: HubClient, client_name: str | None = None) -> S
         "hub": hub,
         "read_only": settings.get("read_only"),
         "confirm_threshold": settings.get("confirm_threshold"),
+        "change_label": settings.get("change_label"),
+        "snapshots": settings.get("snapshots"),
     }
     if not plugin.get("connected"):
         return StatusResult(
@@ -366,11 +385,38 @@ async def list_photos(
     ascending: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     """Photos from ids, the selection or a search; returns (page, total)."""
+    preferences = await runner.preferences()
     if filters is None:
         listing = await runner.read(
             ctx, "photos.get", {**_targets(photo_ids, scope), "limit": limit, "offset": offset}
         )
-        return listing.get("photos") or [], int(listing.get("total") or 0)
+        photos = real_lens_names(listing.get("photos") or [], preferences)
+        return photos, int(listing.get("total") or 0)
+    if filters.lens:
+        filters = filters.model_copy(update={"lens": preferences.lightroom_lens(filters.lens)})
+    page, total = await _search_photos(runner, ctx, filters, limit, offset, sort, ascending)
+    return real_lens_names(page, preferences), total
+
+
+def real_lens_names(photos: list[dict[str, Any]], preferences: Settings) -> list[dict[str, Any]]:
+    """Shows the real name of lenses Lightroom names wrongly (the user's settings)."""
+    for photo in photos:
+        real = preferences.real_lens(photo.get("lens"))
+        if real:
+            photo["lens_in_lightroom"] = photo["lens"]
+            photo["lens"] = real
+    return photos
+
+
+async def _search_photos(
+    runner: Runner,
+    ctx: Context | None,
+    filters: PhotoFilters,
+    limit: int,
+    offset: int,
+    sort: str,
+    ascending: bool,
+) -> tuple[list[dict[str, Any]], int]:
     search = build_search(filters)
     if search is None and not has_post_filters(filters):
         raise ToolError("Give at least one filter.")
@@ -476,7 +522,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         exposure, GPS, title, caption, keywords. Defaults to the photos selected in Lightroom.
         """
         params = {**_targets(photo_ids, scope), "limit": limit, "offset": offset}
-        return await runner.read(ctx, "photos.get", params)
+        listing = await runner.read(ctx, "photos.get", params)
+        real_lens_names(listing.get("photos") or [], await runner.preferences())
+        return listing
 
     @server.tool(annotations=READ_ONLY)
     async def search_photos(
@@ -490,7 +538,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         """Find photos in the whole catalog. Photos must match every filter given.
 
         Use exact Lightroom names for camera and lens (look them up with get_photos on a
-        known photo). Focal length, aperture and shutter speed are checked on the results,
+        known photo); for a lens the user renamed in Safelight's settings, its real name
+        works too. Focal length, aperture and shutter speed are checked on the results,
         so combine them with a filter Lightroom can search (dates, camera, rating...).
         Returns `total` and one page of photo descriptions.
         """
@@ -662,10 +711,11 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             ),
         ] = None,
         label: Annotated[
-            Literal["red", "yellow", "green", "blue", "purple"] | None,
+            Literal["red", "yellow", "green", "blue", "purple", "none"] | None,
             Field(
                 description="Color label for the photos this changes, so the user can find "
-                "and check them. A photo that already has another label keeps it."
+                "and check them (none: no label). Defaults to the user's choice in "
+                "Safelight's settings. A photo that already has another label keeps it."
             ),
         ] = None,
         replace_existing_upright: Annotated[
@@ -681,15 +731,15 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         """Straighten verticals (and frontal horizontals) of architecture and exhibition
         photos with Lightroom's Guided Upright, each photo with its own correction.
 
-        For each photo: a snapshot "Before Safelight straighten" keeps the current
-        settings, earlier transform corrections and the crop are reset, Safelight finds
-        the straight lines on a fresh preview, and writes up to four Upright guides with
-        the matching correction. The correction is a rotation of the camera, so prints and
-        walls keep their proportions; with two vertical and two horizontal guides it is
-        made exact, like Lightroom's own. Corners left empty by the correction are not
-        cropped. Rotated photos are skipped, and so are photos that already have an Upright
-        correction: it may be the user's own work. A photo that cannot be straightened gets
-        its earlier transform and crop back.
+        For each photo: a snapshot "Before Safelight straighten" keeps the current settings
+        (unless the user turned snapshots off), earlier transform corrections and the crop
+        are reset, Safelight finds the straight lines on a fresh preview, and writes up to
+        four Upright guides with the matching correction. The correction is a rotation of
+        the camera, so prints and walls keep their proportions; with two vertical and two
+        horizontal guides it is made exact, like Lightroom's own. Corners left empty by the
+        correction are not cropped. Rotated photos are skipped, and so are photos that
+        already have an Upright correction: it may be the user's own work. A photo that
+        cannot be straightened gets its earlier transform and crop back.
 
         The lines found automatically are sometimes wrong (shadows, lines inside prints,
         ceiling rails). To choose the guides yourself, look at the numbered lines with
@@ -713,6 +763,12 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         if not photos:
             raise ToolError("No photos to straighten.")
         status = await hub_client.status()
+        preferences = Settings()
+        preferences.update(status.get("settings") or {}, strict=False)
+        if label is None:
+            label = preferences.change_label  # type: ignore[assignment]
+        if label == "none":
+            label = None
         if (status.get("settings") or {}).get("confirm_threshold") == 0:
             # Each photo gets its own correction, so each would need its own approval.
             raise ToolError("straighten_photos needs a confirmation threshold of at least 1.")
@@ -752,7 +808,10 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         def report(done: list[dict[str, Any]]) -> ActionResult:
             to_review = [entry["id"] for entry in done if entry.get("warnings")]
             notes = [
-                f"each photo has a snapshot '{STRAIGHTEN_SNAPSHOT}' with its settings from before",
+                f"each photo has a snapshot '{STRAIGHTEN_SNAPSHOT}' with its settings from before"
+                if preferences.snapshots
+                else "no snapshot (the user turned them off): Lightroom's History has the "
+                "settings from before",
                 "the crop was reset and corners left empty are not cropped",
                 "pitch > 0: the camera was pointing down; roll > 0: turned clockwise",
             ]
@@ -848,7 +907,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                     "uuids": ids,
                     "settings": RESET_SETTINGS,
                     "history_name": history,
-                    "snapshot": STRAIGHTEN_SNAPSHOT,
+                    **({"snapshot": STRAIGHTEN_SNAPSHOT} if preferences.snapshots else {}),
                 },
                 confirmation_token,
             )

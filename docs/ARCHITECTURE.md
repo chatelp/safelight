@@ -65,7 +65,11 @@ A small local daemon, one per user session:
 - applies the **command policy** before running anything that changes the
   catalog;
 - keeps an **activity log** and the list of recently seen AI clients;
-- stores the user's **settings** in `settings.json` next to `hub.json`.
+- stores the user's **settings** in `settings.json` next to `hub.json`: confirmation
+  threshold, read-only mode, the color label for photos Safelight changes (purple by
+  default), whether to take a snapshot before a geometry change, and the real names of
+  lenses Lightroom names wrongly. They are the user's stable choices, edited in the app,
+  and every AI client follows them without being told.
 
 #### Jobs
 
@@ -113,7 +117,7 @@ The AI cannot change settings: they are only reachable through the local API
 | `GET /v1/jobs`, `GET /v1/jobs/{id}?wait_s=` | relays, app | recent jobs, one job |
 | `POST /v1/jobs/{id}/cancel` | relays, app | cancel a job |
 | `GET /v1/activity?after=` | app | activity events after a sequence number |
-| `GET`/`PUT /v1/settings` | app, CLI | confirmation threshold, read-only mode |
+| `GET`/`PUT /v1/settings` | app, CLI, relays | the user's settings (see Hub) |
 | `POST /v1/plugin/poll` | plugin | long-poll for jobs |
 | `POST /v1/plugin/progress` | plugin | report progress, learn about cancellation |
 | `POST /v1/plugin/result` | plugin | deliver a job's result |
@@ -169,7 +173,8 @@ progress. It talks to the hub's status API:
 - open Lightroom, restart the hub, open logs;
 - install or update the Lightroom plugin, register Safelight with Claude Desktop,
   Claude Code, Cursor and Codex;
-- settings: confirmation threshold, read-only mode, launch at login.
+- settings: confirmation threshold, read-only mode, launch at login; a Preferences
+  window for the color of changed photos, snapshots and lens names.
 
 The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
 with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds

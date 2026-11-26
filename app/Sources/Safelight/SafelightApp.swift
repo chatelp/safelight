@@ -14,6 +14,10 @@ struct SafelightApp: App {
             PreviewRenderer.render(to: URL(fileURLWithPath: arguments[index + 1]))
             exit(0)
         }
+        if let index = arguments.firstIndex(of: "--render-preferences"), index + 1 < arguments.count {
+            PreviewRenderer.render(to: URL(fileURLWithPath: arguments[index + 1]), preferences: true)
+            exit(0)
+        }
         _model = State(initialValue: AppModel())
     }
 
@@ -26,21 +30,32 @@ struct SafelightApp: App {
                 .help(model.displayedState.accessibilityLabel)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Safelight Preferences", id: "preferences") {
+            PreferencesView(model: model)
+        }
+        .windowResizability(.contentSize)
     }
 }
 
 /// Renders StatusView with sample data to a PNG, in light and dark appearance side by side.
 @MainActor
 enum PreviewRenderer {
-    static func render(to url: URL) {
+    static func render(to url: URL, preferences: Bool = false) {
         let status = try? JSONDecoder.snakeCase.decode(HubStatus.self, from: Data(sampleStatus.utf8))
         let events = (try? JSONDecoder.snakeCase.decode(ActivityPage.self, from: Data(sampleActivity.utf8)))?.events ?? []
         let model = AppModel(preview: (status, events.reversed()))
         let view = HStack(alignment: .top, spacing: 0) {
-            StatusView(model: model).background(Color(nsColor: .windowBackgroundColor))
-                .environment(\.colorScheme, .light)
-            StatusView(model: model).background(Color(red: 0.16, green: 0.17, blue: 0.19))
-                .environment(\.colorScheme, .dark)
+            Group {
+                if preferences { PreferencesView(model: model) } else { StatusView(model: model) }
+            }
+            .background(Color(nsColor: .windowBackgroundColor))
+            .environment(\.colorScheme, .light)
+            Group {
+                if preferences { PreferencesView(model: model) } else { StatusView(model: model) }
+            }
+            .background(Color(red: 0.16, green: 0.17, blue: 0.19))
+            .environment(\.colorScheme, .dark)
         }
         let renderer = ImageRenderer(content: view)
         renderer.scale = 2
@@ -61,7 +76,8 @@ enum PreviewRenderer {
                     "lightroom_version": "16.0.1", "catalog": "/Volumes/Photos/Lightroom Catalog.lrcat"},
          "jobs": {"queued": 0, "running": 1},
          "clients": [{"name": "claude-ai", "last_seen_s_ago": 12}, {"name": "claude-code", "last_seen_s_ago": 300}],
-         "settings": {"confirm_threshold": 50, "read_only": false}}
+         "settings": {"confirm_threshold": 50, "read_only": false, "change_label": "purple", "snapshots": false,
+                      "lens_names": [{"lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"}]}}
         """
 
     static let sampleActivity = """

@@ -171,6 +171,35 @@ final class AppModel {
         save(settings)
     }
 
+    func setChangeLabel(_ value: String) {
+        guard var settings = status?.settings, HubSettings.labels.contains(value) else { return }
+        settings.changeLabel = value
+        save(settings)
+    }
+
+    func setSnapshots(_ value: Bool) {
+        guard var settings = status?.settings else { return }
+        settings.snapshots = value
+        save(settings)
+    }
+
+    func addLensName(lightroom: String, real: String) {
+        guard var settings = status?.settings else { return }
+        let lens = HubSettings.LensName(
+            lightroom: lightroom.trimmingCharacters(in: .whitespaces),
+            real: real.trimmingCharacters(in: .whitespaces)
+        )
+        settings.lensNames.removeAll { $0.lightroom == lens.lightroom }
+        settings.lensNames.append(lens)
+        save(settings)
+    }
+
+    func removeLensName(_ lens: HubSettings.LensName) {
+        guard var settings = status?.settings else { return }
+        settings.lensNames.removeAll { $0 == lens }
+        save(settings)
+    }
+
     private func save(_ settings: HubSettings) {
         Task {
             do {

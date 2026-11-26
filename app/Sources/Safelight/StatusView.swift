@@ -6,6 +6,7 @@ import SwiftUI
 /// system colors, amber only for live state).
 struct StatusView: View {
     @Bindable var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -192,6 +193,10 @@ struct StatusView: View {
             }
             .menuStyle(.borderlessButton)
             .padding(.vertical, 4)
+            MenuButton("Preferences…", systemImage: "slider.horizontal.3") {
+                openWindow(id: "preferences")
+                NSApp.activate()
+            }
             MenuButton("Show Hub Log", systemImage: "doc.text") { model.showHubLog() }
             MenuButton("Quit Safelight", systemImage: "power") { NSApp.terminate(nil) }
         }

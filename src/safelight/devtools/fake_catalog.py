@@ -48,6 +48,7 @@ class FakeCatalog:
                 "snapshots": [],
                 "captured_at": CAPTURE_TIMES[index % len(CAPTURE_TIMES)],
                 "camera": "ILCE-7M3",
+                "lens": "DT 17mm F4 SAM" if index == 7 else "FE 24-70mm F4 ZA OSS",
                 "focal_length_mm": [24, 35, 35, 50, 70, 85, 24, 135][index % 8],
                 "aperture": [1.8, 2.8, 2.8, 4.0, 5.6, 1.4, 8.0, 2.0][index % 8],
             }
@@ -86,6 +87,7 @@ class FakeCatalog:
             "title",
             "captured_at",
             "camera",
+            "lens",
             "focal_length_mm",
             "aperture",
         )
@@ -119,6 +121,8 @@ class FakeCatalog:
         for criterion in criteria:
             if criterion.get("criteria") == "rating" and criterion.get("operation") == ">=":
                 found = [p for p in found if p["rating"] >= criterion["value"]]
+            if criterion.get("criteria") == "lens" and criterion.get("operation") == "==":
+                found = [p for p in found if p["lens"] == criterion["value"]]
         limit = int(params.get("limit", 50))
         return {"total": len(found), "photos": [self._summary(p) for p in found[:limit]]}
 
@@ -157,6 +161,11 @@ class FakeCatalog:
             return self._plan(photos, f"Change develop settings on {len(photos)} photos")
         for index, photo in enumerate(photos):
             await progress(index, len(photos), "Develop")
+            snapshot = params.get("snapshot")
+            if snapshot and all(s["name"] != snapshot for s in photo["snapshots"]):
+                photo["snapshots"].append(
+                    {"id": f"S{len(photo['snapshots']) + 1}", "name": snapshot}
+                )
             for name, value in params["settings"].items():
                 key = {"Exposure": "Exposure2012", "Contrast": "Contrast2012"}.get(name, name)
                 if params.get("relative"):
