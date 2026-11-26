@@ -10,22 +10,32 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import time
 from typing import Annotated, Any, Literal
 
 import anyio
+import numpy as np
 from mcp.server.mcpserver import Context, Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from . import __version__
+from . import __version__, straighten_store
 from .analysis import findings, groups, measure, summarize, top_of_stacks
 from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
 from .search import PhotoFilters, build_search, has_post_filters, matches_post_filters
-from .upright import RESET_SETTINGS, Plan, geometry_settings, plan_from_jpeg
+from .upright import (
+    DISAGREE_DEG,
+    RESET_SETTINGS,
+    Plan,
+    disagreement_deg,
+    geometry_settings,
+    plan_from_jpeg,
+    plan_from_lines,
+)
 
 STRAIGHTEN_SNAPSHOT = "Before Safelight straighten"
 
@@ -643,6 +653,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 "Guided Upright with four lines. verticals: vertical lines only."
             ),
         ] = "verticals_and_frontal",
+        chosen_lines: Annotated[
+            dict[str, list[int]] | None,
+            Field(
+                description="Guides you chose yourself after looking at straighten_lines: "
+                "photo id -> 2 to 4 line numbers. Only for photos Safelight straightened "
+                "before. Replaces photo_ids, scope and filters."
+            ),
+        ] = None,
         label: Annotated[
             Literal["red", "yellow", "green", "blue", "purple"] | None,
             Field(
@@ -666,17 +684,31 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         For each photo: a snapshot "Before Safelight straighten" keeps the current
         settings, earlier transform corrections and the crop are reset, Safelight finds
         the straight lines on a fresh preview, and writes up to four Upright guides with
-        the matching correction. The correction is a rotation of the camera: prints and
-        walls keep their proportions. Corners left empty by the correction are not
+        the matching correction. The correction is a rotation of the camera, so prints and
+        walls keep their proportions; with two vertical and two horizontal guides it is
+        made exact, like Lightroom's own. Corners left empty by the correction are not
         cropped. Rotated photos are skipped, and so are photos that already have an Upright
         correction: it may be the user's own work. A photo that cannot be straightened gets
-        its earlier transform and crop back. Check the result with contact_sheet, and look
-        closer at photos listed with warnings: the user can move the guides in
-        Lightroom (Transform tool) to adjust one.
+        its earlier transform and crop back.
+
+        The lines found automatically are sometimes wrong (shadows, lines inside prints,
+        ceiling rails). To choose the guides yourself, look at the numbered lines with
+        straighten_lines, then call this tool again with chosen_lines. When your verticals
+        disagree with the automatic ones, the photo is not changed and is listed in
+        left_to_user: tell the user, who can draw the guides in Lightroom (Transform tool).
+        Check the result with contact_sheet, and look closer at photos with warnings.
         """
-        photos, _ = await list_photos(
-            runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
-        )
+        store_home = hub_client.home
+        if chosen_lines is not None:
+            if not chosen_lines:
+                raise ToolError("chosen_lines is empty.")
+            photos, _ = await list_photos(
+                runner, ctx, photo_ids=list(chosen_lines), limit=max_photos
+            )
+        else:
+            photos, _ = await list_photos(
+                runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
+            )
         photos, skipped_stacked = top_of_stacks(photos)
         if not photos:
             raise ToolError("No photos to straighten.")
@@ -686,24 +718,78 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             raise ToolError("straighten_photos needs a confirmation threshold of at least 1.")
         rotated: list[dict[str, Any]] = []
         already: list[dict[str, Any]] = []
+        left_to_user: list[dict[str, Any]] = []
+        not_done: list[dict[str, Any]] = []
         upright_photos = []
         before: dict[str, dict[str, Any]] = {}  # geometry to put back if it goes wrong
+        lens: dict[str, dict[str, Any]] = {}  # settings the lines found depend on
+        chosen_plans: dict[str, Plan] = {}
         for photo in photos:
             current = await runner.read(ctx, "develop.get", {"uuids": [photo["uuid"]]})
             settings = current.get("settings") or {}
             entry = {"id": photo["uuid"], "file": photo.get("file_name")}
-            if settings.get("PerspectiveUpright") and not replace_existing_upright:
+            if chosen_lines is not None:
+                refusal = _choose(photo["uuid"], chosen_lines[photo["uuid"]], settings)
+                if isinstance(refusal, Plan):
+                    chosen_plans[photo["uuid"]] = refusal
+                    upright_photos.append(photo)
+                    before[photo["uuid"]] = geometry_settings(settings)
+                elif refusal.get("left_to_user"):
+                    left_to_user.append({**entry, **refusal["left_to_user"]})
+                elif refusal.get("changed"):
+                    already.append({**entry, "reason": refusal["changed"]})
+                else:
+                    not_done.append({**entry, "reason": refusal["reason"], "put_back": False})
+            elif settings.get("PerspectiveUpright") and not replace_existing_upright:
                 already.append(entry)
             elif settings.get("orientation") in (None, "", "AB"):
                 upright_photos.append(photo)
                 before[photo["uuid"]] = geometry_settings(settings)
+                lens[photo["uuid"]] = settings
             else:
                 rotated.append(entry)
+
+        def report(done: list[dict[str, Any]]) -> ActionResult:
+            to_review = [entry["id"] for entry in done if entry.get("warnings")]
+            notes = [
+                f"each photo has a snapshot '{STRAIGHTEN_SNAPSHOT}' with its settings from before",
+                "the crop was reset and corners left empty are not cropped",
+                "pitch > 0: the camera was pointing down; roll > 0: turned clockwise",
+            ]
+            if chosen_lines is None and done:
+                notes.append(
+                    "to choose the guides yourself: straighten_lines shows the numbered "
+                    "lines, then call straighten_photos with chosen_lines"
+                )
+            return ActionResult(
+                state="succeeded",
+                result={
+                    "summary": {
+                        "straightened": len(done),
+                        "not_straightened": len(not_done),
+                        "to_review": len(to_review),
+                        "left_to_user": len(left_to_user),
+                        "rotated_skipped": len(rotated),
+                        "already_corrected_skipped": len(already),
+                        "stacked_frames_skipped": skipped_stacked,
+                    },
+                    "straightened": done,
+                    "not_straightened": not_done,
+                    "left_to_user": left_to_user,
+                    "rotated_skipped": rotated,
+                    "already_corrected_skipped": already,
+                    "notes": notes,
+                },
+            )
+
         if not upright_photos:
+            if chosen_lines is not None:
+                return report([])
             raise ToolError(
                 f"Nothing to straighten: {len(already)} photos already have an Upright "
                 f"correction and {len(rotated)} are rotated, which is not supported yet."
             )
+        history = "Safelight: Straighten" + (" (chosen lines)" if chosen_lines else "")
 
         async def set_label(photo: dict[str, Any]) -> str:
             """Labels a changed photo; returns what its label is now, or what went wrong."""
@@ -739,7 +825,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
 
         async def put_back(photo_id: str) -> bool:
             settings = before[photo_id]
-            return await apply(photo_id, settings, "Safelight: Straighten (put back)") is None
+            return await apply(photo_id, settings, f"{history} (put back)") is None
+
+        def keep(photo_id: str, plan: Plan, jpeg: bytes | None) -> None:
+            """Remember the lines and the correction, for straighten_lines and chosen_lines."""
+            if not plan.lines:
+                return
+            with contextlib.suppress(OSError, ValueError, KeyError):
+                straighten_store.save(photo_id, plan, lens.get(photo_id, {}), jpeg, store_home)
 
         ids = [photo["uuid"] for photo in upright_photos]
         # From the reset on, photos have lost their geometry: whatever happens (no line
@@ -754,7 +847,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 {
                     "uuids": ids,
                     "settings": RESET_SETTINGS,
-                    "history_name": "Safelight: Straighten",
+                    "history_name": history,
                     "snapshot": STRAIGHTEN_SNAPSHOT,
                 },
                 confirmation_token,
@@ -772,21 +865,25 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 for failure in (reset.result or {}).get("failures") or []
             }
 
-            async def report(done: int, count: int) -> None:
+            async def progress(done: int, count: int) -> None:
                 await ctx.report_progress(done, 2 * count, f"Rendered {done} of {count} previews")
 
-            previews = await fetch_previews(hub_client, ctx, upright_photos, 2048, report)
-            frontal = guides == "verticals_and_frontal"
+            previews: list[bytes | None]
+            if chosen_lines is None:
+                previews = await fetch_previews(hub_client, ctx, upright_photos, 2048, progress)
+                frontal = guides == "verticals_and_frontal"
 
-            def compute() -> list[Plan | None]:
-                return [
-                    plan_from_jpeg(jpeg, photo, frontal_horizontals=frontal) if jpeg else None
-                    for photo, jpeg in zip(upright_photos, previews, strict=True)
-                ]
+                def compute() -> list[Plan | None]:
+                    return [
+                        plan_from_jpeg(jpeg, photo, frontal_horizontals=frontal) if jpeg else None
+                        for photo, jpeg in zip(upright_photos, previews, strict=True)
+                    ]
 
-            plans = await asyncio.to_thread(compute)
+                plans = await asyncio.to_thread(compute)
+            else:
+                previews = [None] * len(upright_photos)
+                plans = [chosen_plans[photo_id] for photo_id in ids]
             done: list[dict[str, Any]] = []
-            not_done: list[dict[str, Any]] = []
             for index, (photo, jpeg, plan) in enumerate(
                 zip(upright_photos, previews, plans, strict=True)
             ):
@@ -800,11 +897,15 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 elif plan is None:
                     reason = "no preview" if not jpeg else "no usable straight line found"
                 else:
-                    error = await apply(photo_id, plan.settings(), "Safelight: Straighten")
+                    error = await apply(photo_id, plan.settings(), history)
                     if error is None:
                         pending.discard(photo_id)
+                        await asyncio.to_thread(keep, photo_id, plan, jpeg)
+                        chosen = (
+                            {"lines": [i + 1 for i in plan.guide_lines]} if chosen_lines else {}
+                        )
                         labelled = {"label": await set_label(photo)} if label else {}
-                        done.append({**entry, **plan.as_dict(), **labelled})
+                        done.append({**entry, **plan.as_dict(), **chosen, **labelled})
                         continue
                     reason = f"Lightroom refused it: {error}"
                 restored = await put_back(photo_id)
@@ -818,30 +919,88 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         failed_in_a_row = 0 if await put_back(photo_id) else failed_in_a_row + 1
                         if failed_in_a_row == 2:
                             break  # Lightroom is gone or busy: the snapshots remain
-        to_review = [entry["id"] for entry in done if entry.get("warnings")]
-        return ActionResult(
-            state="succeeded",
-            result={
-                "summary": {
-                    "straightened": len(done),
-                    "not_straightened": len(not_done),
-                    "to_review": len(to_review),
-                    "rotated_skipped": len(rotated),
-                    "already_corrected_skipped": len(already),
-                    "stacked_frames_skipped": skipped_stacked,
-                },
-                "straightened": done,
-                "not_straightened": not_done,
-                "rotated_skipped": rotated,
-                "already_corrected_skipped": already,
-                "notes": [
-                    f"each photo has a snapshot '{STRAIGHTEN_SNAPSHOT}' with its settings "
-                    "from before",
-                    "the crop was reset and corners left empty are not cropped",
-                    "pitch > 0: the camera was pointing down; roll > 0: turned clockwise",
-                ],
-            },
+        return report(done)
+
+    def _choose(photo_id: str, numbers: list[int], settings: dict[str, Any]) -> Plan | dict:
+        """The plan for the lines chosen on one photo, or why it is not made."""
+        saved = straighten_store.load(photo_id, hub_client.home)
+        if saved is None:
+            return {"reason": "Safelight kept no lines for this photo: straighten it first"}
+        if not saved.is_current(settings):
+            return {"changed": "its correction changed since Safelight wrote it"}
+        if saved.lens_changed(settings):
+            return {
+                "reason": "its lens corrections or orientation changed since the lines were "
+                "found: straighten it again (replace_existing_upright)"
+            }
+        try:
+            plan = plan_from_lines(
+                saved.lines, [n - 1 for n in numbers], saved.width, saved.height, saved.focal_px
+            )
+        except ValueError as exc:
+            return {"reason": f"lines {numbers}: {exc}"}
+        verticals = [plan.lines[i].segment for i in plan.guide_lines if plan.lines[i].vertical]
+        auto = np.array(saved.auto_matrix).reshape(3, 3)
+        gap = disagreement_deg(plan.matrix, verticals, auto, saved.auto_verticals)
+        if gap > DISAGREE_DEG:
+            return {
+                "left_to_user": {
+                    "chosen": numbers,
+                    "automatic": [i + 1 for i in saved.auto_guide_lines],
+                    "disagreement_deg": round(gap, 2),
+                    "reason": "the chosen verticals and the automatic ones disagree: only the "
+                    "user can tell which are right",
+                }
+            }
+        return plan
+
+    @server.tool(annotations=READ_ONLY, structured_output=False)
+    async def straighten_lines(
+        ctx: Context,
+        photo_ids: PhotoIds = None,
+        scope: Scope = "selected",
+        max_photos: Annotated[int, Field(ge=1, le=8)] = 4,
+    ) -> list[Any]:
+        """See the straight lines Safelight found on photos it straightened, numbered, to
+        choose their guides yourself.
+
+        Each photo is shown as it was analysed, without any correction: verticals in blue,
+        horizontals in orange, the guides in use thicker in magenta. Choose by eye: the
+        long edges of things flat on the wall (frames, panels, prints) and of walls, pillars
+        and doors. Never shadows, lines inside a printed photo, ceiling rails or lights that
+        are not on the wall, cables, or short pieces. Take two verticals far apart, one on
+        each side, and when the view faces the wall, two horizontals: the top and bottom
+        edges of works hung on it. Then call straighten_photos with chosen_lines. For a
+        view along a wall (receding), or when unsure of the verticals, leave the photo to
+        the user.
+        """
+        photos, _ = await list_photos(
+            runner, ctx, photo_ids=photo_ids, scope=scope, limit=max_photos
         )
+        out: list[Any] = []
+        missing = []
+        for photo in photos:
+            saved = await asyncio.to_thread(straighten_store.load, photo["uuid"], hub_client.home)
+            if saved is None:
+                missing.append(photo.get("file_name") or photo["uuid"])
+                continue
+            image = await asyncio.to_thread(straighten_store.draw, saved)
+            rows = [
+                f"{line['number']}. {line['kind']}, {line['length_pct']}% long, at "
+                f"{'x' if line['kind'] == 'vertical' else 'y'}={line['at_pct']}%, "
+                f"{line['angle_deg']} deg" + (" [guide]" if line.get("guide") else "")
+                for line in straighten_store.describe(saved)
+            ]
+            out.append(Image(data=image, format="jpeg"))
+            out.append(f"{photo['uuid']}  {photo.get('file_name', '')}\n" + "\n".join(rows))
+        if not out:
+            raise ToolError(
+                "Safelight kept no lines for these photos: straighten them with "
+                "straighten_photos first."
+            )
+        if missing:
+            out.append("No lines kept for: " + ", ".join(missing))
+        return out
 
     # -- develop --------------------------------------------------------------------------
 

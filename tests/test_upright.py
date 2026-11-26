@@ -7,11 +7,16 @@ from PIL import Image, ImageDraw
 
 from safelight.upright import (
     RESET_SETTINGS,
+    Line,
+    _project,
+    disagreement_deg,
+    exact_homography,
     fit_rotation,
     guide_errors,
     homography,
     plan,
     plan_from_jpeg,
+    plan_from_lines,
 )
 
 W, H, F = 6000, 4000, 17 / 36 * 6000
@@ -108,3 +113,120 @@ def test_a_single_horizontal_does_not_turn_the_view():
         all(abs(g[3] - g[1]) > abs(g[2] - g[0]) for g in result.guides)
         or len([g for g in result.guides if abs(g[3] - g[1]) <= abs(g[2] - g[0])]) >= 2
     )
+
+
+# -- exact correction and chosen lines ----------------------------------------------------
+
+
+def shifted_rectangle(pitch_deg, yaw_deg, roll_deg, shift=(0.03, -0.04)):
+    """Edges of a frontal rectangle seen through a shifted lens (tilt-shift): the optical
+    centre is not the image centre, which a camera rotation alone cannot model."""
+    move = np.array([[1, 0, shift[0]], [0, 1, shift[1]], [0, 0, 1.0]])
+    rotation = homography(*(math.radians(a) for a in (pitch_deg, yaw_deg, roll_deg)), W, H, F)
+    camera = np.linalg.inv(move) @ np.linalg.inv(rotation) @ move
+
+    def seen(x, y):
+        q = camera @ np.array([x, y, 1.0])
+        return tuple(q[:2] / q[2])
+
+    a, b, c, d = seen(0.2, 0.3), seen(0.8, 0.3), seen(0.8, 0.7), seen(0.2, 0.7)
+    return [(*a, *d), (*b, *c), (*a, *b), (*d, *c)]
+
+
+def _worst(matrix, segments):
+    return max(abs(math.degrees(e)) for e in guide_errors(matrix, segments))
+
+
+def _aspect(matrix):
+    centre = np.array(_project(matrix, 0.5, 0.5))
+    across = (np.array(_project(matrix, 0.5001, 0.5)) - centre) * W
+    down = (np.array(_project(matrix, 0.5, 0.5001)) - centre) * H
+    return np.linalg.norm(across) / np.linalg.norm(down)
+
+
+def test_exact_correction_straightens_what_a_rotation_cannot():
+    segments = shifted_rectangle(4.0, 2.0, 0.5)
+    rotation = homography(*fit_rotation(segments, W, H, F), W, H, F)
+    exact = exact_homography(segments, W, H, rotation)
+    assert _worst(rotation, segments) > 0.1  # the shifted lens is out of reach
+    assert exact is not None
+    assert _worst(exact, segments) < 1e-6
+    # Proportions stay those of the rotation: a print is not stretched.
+    assert _aspect(exact) == pytest.approx(_aspect(rotation), rel=2e-3)
+
+
+def test_exact_correction_is_refused_for_lines_of_different_views():
+    segments = keystoned_rectangle(1.0, 0.0, 0.0)
+    x1, y1, x2, y2 = segments[3]
+    segments[3] = (x1, y1 + 0.25, x2, y2 - 0.25)  # a ceiling rail in steep perspective
+    rotation = homography(*fit_rotation(segments, W, H, F), W, H, F)
+    assert exact_homography(segments, W, H, rotation) is None
+    assert exact_homography(segments[:3], W, H, rotation) is None  # needs 2 + 2 lines
+
+
+def _lines(segments):
+    return [Line(s, 0.4, 0.0) for s in segments]
+
+
+def test_chosen_lines_make_an_exact_plan():
+    lines = _lines([*shifted_rectangle(3.0, 1.0, 0.0), (0.5, 0.1, 0.5, 0.2)])
+    result = plan_from_lines(lines, [0, 1, 2, 3], W, H, F)
+    assert result.model == "exact"
+    assert result.guide_error_deg < 1e-6
+    assert result.guide_lines == [0, 1, 2, 3]
+    only_verticals = plan_from_lines(lines, [0, 1], W, H, F)
+    assert only_verticals.model == "rotation"
+
+
+@pytest.mark.parametrize(
+    ("chosen", "message"),
+    [
+        ([0], "two to four"),
+        ([0, 0], "at most once"),
+        ([0, 9], "from 1 to 5"),
+        ([2, 3], "vertical"),
+        ([0, 4], "too close"),
+    ],
+)
+def test_chosen_lines_are_checked(chosen, message):
+    lines = _lines([*shifted_rectangle(3.0, 1.0, 0.0), (0.25, 0.1, 0.25, 0.9)])
+    with pytest.raises(ValueError, match=message):
+        plan_from_lines(lines, chosen, W, H, F)
+
+
+def test_disagreement_between_two_choices_of_verticals():
+    segments = keystoned_rectangle(4.0, 0.0, 0.0)
+    good = homography(*fit_rotation(segments[:2], W, H, F), W, H, F)
+    leaning = [(0.3, 0.2, 0.33, 0.8), (0.7, 0.2, 0.69, 0.8)]  # e.g. a shadow and a cable
+    other = homography(*fit_rotation(leaning, W, H, F), W, H, F)
+    assert disagreement_deg(good, segments[:2], good, segments[:2]) < 1e-6
+    assert disagreement_deg(good, segments[:2], other, leaning) > 1.0
+
+
+def test_chosen_print_edges_give_the_print_its_true_shape():
+    image = exhibition_wall(4.0)
+    found = plan(image, 1500, 1000, focal_35mm=17)
+    assert found is not None
+    edges = {}  # the print is 0.2..0.8 wide and 0.3..0.7 high on the wall
+    for index, line in enumerate(found.lines):
+        x, y = line.center
+        if line.length > 0.3 and (0.15 < x < 0.85) and (0.25 < y < 0.75):
+            side = (
+                ("left" if x < 0.5 else "right")
+                if line.vertical
+                else "top"
+                if y < 0.5
+                else "bottom"
+            )
+            edges.setdefault(side, index)
+    assert set(edges) == {"left", "right", "top", "bottom"}
+    chosen = plan_from_lines(found.lines, list(edges.values()), 1500, 1000, found.focal_px)
+    assert chosen.model == "exact"
+    corners = {
+        side: _project(chosen.matrix, *found.lines[index].segment[:2])
+        for side, index in edges.items()
+    }
+    assert corners["left"][0] == pytest.approx(0.2, abs=0.003)
+    assert corners["right"][0] == pytest.approx(0.8, abs=0.003)
+    assert corners["top"][1] == pytest.approx(0.3, abs=0.003)
+    assert corners["bottom"][1] == pytest.approx(0.7, abs=0.003)

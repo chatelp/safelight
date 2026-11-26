@@ -15,7 +15,7 @@ from safelight.hub import Hub, HubServer
 from safelight.hub_client import HubClient
 from safelight.mcp_server import build_server
 from safelight.settings import Settings
-from safelight.upright import Plan
+from safelight.upright import Line, Plan, plan_from_lines
 
 pytestmark = pytest.mark.anyio
 
@@ -70,6 +70,7 @@ EXPECTED_TOOLS = {
     "organize_photos",
     "export_photos",
     "straighten_photos",
+    "straighten_lines",
 }
 
 
@@ -88,6 +89,7 @@ async def test_tool_list_and_read_only_annotations(safelight_home):
         "analyze_photos",
         "get_develop_settings",
         "list_catalog_items",
+        "straighten_lines",
     }
     destructive = {n for n, t in tools.items() if t.annotations.destructive_hint}
     assert destructive == {
@@ -392,6 +394,106 @@ async def test_straighten_puts_photos_back_when_cancelled(safelight_home, monkey
             await asyncio.sleep(0.02)
     for photo in selected:
         _assert_put_back(photo)
+
+
+# -- choosing the guides --------------------------------------------------------------------
+
+LINES = [
+    (0.1, 0.1, 0.1, 0.9),  # 1: left edge of a panel
+    (0.9, 0.1, 0.9, 0.9),  # 2: right edge
+    (0.2, 0.2, 0.8, 0.2),  # 3: top of a print
+    (0.2, 0.8, 0.8, 0.8),  # 4: bottom of the print
+    (0.4, 0.1, 0.43, 0.9),  # 5: a shadow, leaning
+]
+
+
+def _found_plan(*_, **__):
+    lines = [Line(segment, 0.5, 0.0) for segment in LINES]
+    return plan_from_lines(lines, [0, 1], 6000, 4000, 2833.0)  # the automatic guides
+
+
+async def test_straighten_lines_then_chosen_lines(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        shown = await mcp.call_tool("straighten_lines", {"photo_ids": ["FAKE-0001"]})
+        images = [c for c in shown.content if isinstance(c, types.ImageContent)]
+        text = "\n".join(c.text for c in shown.content if isinstance(c, types.TextContent))
+        assert len(images) == 1 and images[0].mime_type == "image/jpeg"
+        assert "1. vertical" in text and "3. horizontal" in text
+        assert text.count("[guide]") == 2
+
+        args = {"chosen_lines": {"FAKE-0001": [1, 2, 3, 4]}, "label": "yellow"}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        photo = catalog.photos["FAKE-0001"]
+        assert [e["lines"] for e in result["straightened"]] == [[1, 2, 3, 4]]
+        assert result["straightened"][0]["model"] == "exact"
+        assert photo["settings"]["UprightFourSegmentsCount"] == 4
+        assert photo["label"] == "yellow"
+
+        # The new choice is remembered, and can be changed again.
+        again = await mcp.call_tool("straighten_lines", {"photo_ids": ["FAKE-0001"]})
+        text = "\n".join(c.text for c in again.content if isinstance(c, types.TextContent))
+        assert text.count("[guide]") == 4
+        args = {"chosen_lines": {"FAKE-0001": [1, 2]}}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        assert result["summary"]["straightened"] == 1
+
+
+async def test_chosen_lines_leave_doubtful_or_changed_photos_alone(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        ids = ["FAKE-0001", "FAKE-0002"]
+        await mcp.call_tool("straighten_photos", {"photo_ids": ids})
+        edited = catalog.photos["FAKE-0002"]
+        edited["settings"]["UprightTransform_5"] = "1,0,0.01,0,1,0,0,0,1"  # moved by the user
+        before = {i: dict(catalog.photos[i]["settings"]) for i in ids}
+        args = {
+            "chosen_lines": {
+                "FAKE-0001": [1, 5],  # a shadow: disagrees with the automatic verticals
+                "FAKE-0002": [1, 2, 3, 4],
+                "FAKE-0003": [1, 2],  # never straightened
+            },
+            "label": "yellow",
+        }
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        after = {i: dict(catalog.photos[i]["settings"]) for i in ids}
+    assert after == before
+    assert [e["id"] for e in result["left_to_user"]] == ["FAKE-0001"]
+    assert result["left_to_user"][0]["automatic"] == [1, 2]
+    assert result["left_to_user"][0]["disagreement_deg"] > 0.45
+    assert [e["id"] for e in result["already_corrected_skipped"]] == ["FAKE-0002"]
+    assert "kept no lines" in result["not_straightened"][0]["reason"]
+    assert result["summary"]["straightened"] == 0
+    assert catalog.photos["FAKE-0001"]["label"] != "yellow"
+
+
+async def test_chosen_lines_refuse_lines_found_before_a_lens_change(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        photo = catalog.photos["FAKE-0001"]
+        photo["settings"]["LensProfileEnable"] = 1  # the lines moved with the distortion
+        before = dict(photo["settings"])
+        args = {"chosen_lines": {"FAKE-0001": [1, 2, 3, 4]}}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+    assert photo["settings"] == before
+    assert "lens corrections" in result["not_straightened"][0]["reason"]
+
+
+async def test_straighten_lines_needs_a_straightened_photo(safelight_home):
+    async with lightroom(safelight_home), Client(build_server(HubClient(safelight_home))) as mcp:
+        result = await mcp.call_tool("straighten_lines", {"photo_ids": ["FAKE-0001"]})
+    assert result.is_error and "straighten_photos first" in result.content[0].text
 
 
 async def test_straighten_asks_first_and_touches_nothing(safelight_home):
