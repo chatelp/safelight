@@ -99,6 +99,12 @@ public struct HubAPI: Sendable {
         try Self.decoder.decode(ActivityPage.self, from: try await request("GET", "/v1/activity?after=\(seq)"))
     }
 
+    /// Marks photos to check as done: they leave the list.
+    public func reviewDone(_ ids: [String]) async throws {
+        let body = try JSONSerialization.data(withJSONObject: ["done": ids])
+        _ = try await request("POST", "/v1/review", body: body)
+    }
+
     /// The user's answer to a change waiting for approval. Returns the decision the hub
     /// kept: the answer given, or "withdrawn" / "unknown" when it came too late.
     @discardableResult

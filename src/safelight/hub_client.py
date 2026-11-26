@@ -257,6 +257,16 @@ class HubClient:
         path = f"/v1/approvals/{urllib.parse.quote(approval_id)}"
         return await self._call_hub("POST", path, {"decision": decision})
 
+    async def review(
+        self, add: list[dict[str, Any]] | None = None, done: list[str] | None = None
+    ) -> dict[str, Any]:
+        """Photos to check in the app: add some, mark some done, or list them."""
+        if add or done:
+            return await self._call_hub(
+                "POST", "/v1/review", {"add": add or [], "done": done or []}
+            )
+        return await self._call_hub("GET", "/v1/review")
+
     async def settings(self, changes: dict[str, Any] | None = None) -> dict[str, Any]:
         if changes:
             return await self._call_hub("PUT", "/v1/settings", changes)

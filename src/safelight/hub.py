@@ -117,6 +117,23 @@ class Job:
         return out
 
 
+# Photos to check: at most this many are kept, and the first ones are in the status.
+MAX_REVIEW = 200
+REVIEW_SHOWN = 20
+
+
+def _load_review(path: Path | None) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return (
+        [e for e in data if isinstance(e, dict) and e.get("id")] if isinstance(data, list) else []
+    )
+
+
 # An approval stays in the app this long after the relay's last wait for it.
 APPROVAL_SHOWN_S = 15.0
 
@@ -179,6 +196,7 @@ class Hub:
         *,
         settings: Settings | None = None,
         settings_path: Path | None = None,
+        review_path: Path | None = None,
         policies: dict[str, CommandPolicy] | None = None,
         connected_grace_s: float = CONNECTED_GRACE_S,
         delivery_timeout_s: float = DELIVERY_TIMEOUT_S,
@@ -203,6 +221,9 @@ class Hub:
         self._active_polls = 0
         self._last_poll_end: float | None = None
         self._app_seen: float | None = None
+        # Photos waiting for the user's eye, shown in the app (see `add_review`).
+        self.review_path = review_path
+        self.review: list[dict[str, Any]] = _load_review(review_path)
 
     # -- presence and status ------------------------------------------------------------
 
@@ -248,6 +269,8 @@ class Hub:
             ],
             "settings": self.settings.as_dict(),
             "app": {"connected": self.app_connected},
+            "review": self.review[:REVIEW_SHOWN],
+            "review_count": len(self.review),
             "approvals": [
                 {
                     "id": p.approval_id,
@@ -262,6 +285,46 @@ class Hub:
                 if p.decision is None and p.expires_at > now and p.awaited(now)
             ],
         }
+
+    # -- photos to check ---------------------------------------------------------------------
+
+    def add_review(self, items: list[dict[str, Any]], client: str) -> int:
+        """Photos an AI client changed and the user should look at: newest first, one entry
+        per photo (a newer reason replaces an older one)."""
+        added = []
+        for item in items:
+            photo_id = str(item.get("id") or "")[:80]
+            if not photo_id:
+                continue
+            added.append(
+                {
+                    "id": photo_id,
+                    "file": str(item.get("file") or "")[:200] or None,
+                    "reason": str(item.get("reason") or "")[:300],
+                    "client": client,
+                    "added_at": _now_iso(),
+                }
+            )
+        ids = {entry["id"] for entry in added}
+        self.review = (added + [e for e in self.review if e["id"] not in ids])[:MAX_REVIEW]
+        self._save_review()
+        return len(added)
+
+    def review_done(self, ids: list[str]) -> int:
+        before = len(self.review)
+        gone = {str(i) for i in ids}
+        self.review = [e for e in self.review if e["id"] not in gone]
+        self._save_review()
+        return before - len(self.review)
+
+    def _save_review(self) -> None:
+        if self.review_path is None:
+            return
+        with contextlib.suppress(OSError):
+            self.review_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.review_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self.review, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, self.review_path)
 
     @property
     def app_connected(self) -> bool:
@@ -712,6 +775,16 @@ def build_app(
             hub.app_seen()
         return JSONResponse(hub.status())
 
+    async def review(request: Request) -> Response:
+        if request.method == "POST":
+            body = await read_json(request)
+            added = body.get("add") if isinstance(body.get("add"), list) else []
+            done = body.get("done") if isinstance(body.get("done"), list) else []
+            count = hub.add_review([i for i in added if isinstance(i, dict)], client_of(request))
+            removed = hub.review_done(done)
+            return JSONResponse({"added": count, "removed": removed, "count": len(hub.review)})
+        return JSONResponse({"review": hub.review})
+
     async def approval(request: Request) -> Response:
         approval_id = request.path_params["approval_id"]
         if request.method == "POST":
@@ -792,6 +865,7 @@ def build_app(
             Route("/v1/activity", guard(activity), methods=["GET"]),
             Route("/v1/settings", guard(settings), methods=["GET", "PUT"]),
             Route("/v1/approvals/{approval_id}", guard(approval), methods=["GET", "POST"]),
+            Route("/v1/review", guard(review), methods=["GET", "POST"]),
             Route("/v1/plugin/poll", guard(plugin_poll), methods=["POST"]),
             Route("/v1/plugin/progress", guard(plugin_progress), methods=["POST"]),
             Route("/v1/plugin/result", guard(plugin_result), methods=["POST"]),
@@ -847,7 +921,9 @@ class HubServer:
         self.home = home
         self.requested_port = port
         self.token = secrets.token_urlsafe(32)
-        self.hub = hub or Hub(settings_path=home / "settings.json")
+        self.hub = hub or Hub(
+            settings_path=home / "settings.json", review_path=home / "review.json"
+        )
         self.hub.host = host
         # The app passes its own process id: if the app goes away without stopping the
         # hub (a crash), the hub notices it has a new parent and stops too.

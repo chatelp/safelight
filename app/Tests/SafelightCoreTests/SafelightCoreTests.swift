@@ -36,6 +36,7 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
     let approval = try #require(status.approvals?.first)
     #expect(approval.title == "Changed metadata" && approval.affected == 80)
     #expect(try decode(HubStatus.self, statusJSON).approvals == nil)  // an older hub
+    #expect(try decode(HubStatus.self, statusJSON).review == nil)
     let page = try decode(ActivityPage.self, """
         {"last_seq": 1, "events": [{"seq": 1, "time": "2026-11-26T20:00:00+00:00", "kind": "approval",
           "client": "claude-ai", "command": "metadata.set", "state": "declined", "affected": 80}]}

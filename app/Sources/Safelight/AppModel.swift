@@ -102,6 +102,21 @@ final class AppModel {
     /// Changes waiting for the user's approval (answered here, or in the AI client).
     var approvals: [HubStatus.Approval] { status?.approvals ?? [] }
 
+    /// Photos an AI client changed that need the user's eye.
+    var review: [HubStatus.ReviewItem] { status?.review ?? [] }
+    var reviewCount: Int { status?.reviewCount ?? review.count }
+
+    func reviewDone(_ ids: [String]) {
+        Task {
+            do {
+                try await api.reviewDone(ids)
+            } catch {
+                show(error.localizedDescription)
+            }
+            await refresh()
+        }
+    }
+
     func answer(_ id: String, approve: Bool) {
         Task {
             do {
