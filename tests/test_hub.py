@@ -511,3 +511,45 @@ async def test_the_app_is_seen_through_its_status_polls(safelight_home):
         app = HubClient(safelight_home, client_name=APP_CLIENT)
         await app.status(start=False)
         assert (await client.status(start=False))["app"]["connected"] is True
+
+
+# -- photos to check ----------------------------------------------------------------------
+
+
+def test_photos_to_check_are_kept_newest_first_and_saved(tmp_path):
+    path = tmp_path / "review.json"
+    hub = Hub(review_path=path)
+    hub.add_review([{"id": "A", "file": "a.dng", "reason": "tilted"}], "claude-ai")
+    hub.add_review([{"id": "B", "reason": "check"}, {"id": "A", "reason": "again"}, {}], "x")
+    assert [(e["id"], e["reason"]) for e in hub.status()["review"]] == [
+        ("B", "check"),
+        ("A", "again"),
+    ]
+    assert Hub(review_path=path).review == hub.review  # survives a restart
+    assert hub.review_done(["A", "nope"]) == 1
+    assert [e["id"] for e in Hub(review_path=path).review] == ["B"]
+    assert hub.status()["review_count"] == 1
+
+
+def test_a_damaged_review_file_does_not_break_the_list(tmp_path):
+    path = tmp_path / "review.json"
+    path.write_text(
+        json.dumps(
+            [
+                {"id": ["x"]},
+                {"id": 3, "reason": "number id"},
+                {"id": "A", "file": {"bad": 1}},
+                {"id": "A", "reason": "second A"},
+                "junk",
+                {"id": "B", "reason": "ok", "client": "claude-ai"},
+            ]
+        )
+    )
+    hub = Hub(review_path=path)
+    assert [(e["id"], e["file"], e["reason"]) for e in hub.review] == [
+        ("A", None, ""),
+        ("B", None, "ok"),
+    ]
+    hub.add_review([{"id": "C", "reason": "1"}, {"id": "C", "reason": "2"}], "x")
+    assert [(e["id"], e["reason"]) for e in hub.review][:2] == [("C", "2"), ("A", "")]
+    assert hub.review_done([["x"], "A"]) == 1

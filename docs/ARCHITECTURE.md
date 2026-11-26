@@ -127,6 +127,7 @@ through the hub, and the app answers by approval id, never with the token.
 | `POST /v1/jobs/{id}/cancel` | relays, app | cancel a job |
 | `GET /v1/activity?after=` | app | activity events after a sequence number |
 | `GET`/`PUT /v1/settings` | app, CLI, relays | the user's settings (see Hub) |
+| `GET`/`POST /v1/review` | relays, app | photos to check: list, add (`add`), mark done (`done`) |
 | `GET /v1/approvals/{id}?wait_s=`, `POST /v1/approvals/{id}` | relays, app | wait for the user's answer; answer (`approved`, `declined`, or `withdrawn` by the relay) |
 | `POST /v1/plugin/poll` | plugin | long-poll for jobs |
 | `POST /v1/plugin/progress` | plugin | report progress, learn about cancellation |
@@ -186,7 +187,10 @@ progress. It talks to the hub's status API:
 - settings: confirmation threshold, read-only mode, launch at login; a Preferences
   window for the color of changed photos, snapshots and lens names;
 - changes waiting for the user's approval, at the top of the popover and as
-  notifications with Approve / Decline (Approve asks to unlock the Mac).
+  notifications with Approve / Decline (Approve asks to unlock the Mac);
+- photos to check: photos an AI client changed that need the user's eye (for example
+  a straightened photo with a warning, or lines left to the user), kept by the hub in
+  `review.json` until the user marks them done.
 
 The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
 with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds

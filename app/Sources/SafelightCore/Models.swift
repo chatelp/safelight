@@ -60,8 +60,28 @@ public struct HubStatus: Decodable, Sendable, Equatable {
     public var plugin: Plugin
     public var jobs: Jobs
     public var clients: [Client]
+    /// A photo an AI client changed that needs the user's eye (hubs from 0.2).
+    public struct ReviewItem: Decodable, Sendable, Equatable, Identifiable {
+        public var id: String
+        public var file: String?
+        public var reason: String
+        public var client: String?
+
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(String.self, forKey: .id)
+            file = try? container.decodeIfPresent(String.self, forKey: .file)
+            reason = (try? container.decodeIfPresent(String.self, forKey: .reason)) ?? ""
+            client = try? container.decodeIfPresent(String.self, forKey: .client)
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, file, reason, client }
+    }
+
     public var settings: HubSettings
     public var approvals: [Approval]?
+    public var review: [ReviewItem]?
+    public var reviewCount: Int?
 }
 
 /// User settings of the hub (`GET`/`PUT /v1/settings`): the user's stable choices, which
