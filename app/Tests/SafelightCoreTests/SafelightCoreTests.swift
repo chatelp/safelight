@@ -21,7 +21,7 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
     #expect(status.plugin.connected)
     #expect(status.plugin.lightroomVersion == "16.0.1")
     #expect(status.clients.first?.name == "claude-ai")
-    #expect(status.settings == HubSettings(confirmThreshold: 50, readOnly: false))
+    #expect(status.settings == HubSettings(confirmThreshold: 50, readOnly: false, hasPreferences: false))
 }
 
 @Test func stateFollowsTheHub() throws {
@@ -51,24 +51,25 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
     #expect(page.events[0].date != nil)
 }
 
-@Test func settingsAreSentInSnakeCase() throws {
+@Test func onlyChangedSettingsAreSentInSnakeCase() throws {
     let lens = HubSettings.LensName(lightroom: "DT 17mm F4 SAM", real: "Canon TS-E 17mm f/4L")
-    let settings = HubSettings(confirmThreshold: 20, readOnly: true, changeLabel: "none", snapshots: false, lensNames: [lens])
-    let data = try HubAPI.encoder.encode(settings)
+    let data = try HubAPI.encoder.encode(HubSettings.Change(readOnly: true, lensNames: [lens]))
     let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-    #expect(object?["confirm_threshold"] as? Int == 20)
+    #expect(Set(object?.keys.map { $0 } ?? []) == ["read_only", "lens_names"])  // an older hub accepts read_only alone
     #expect(object?["read_only"] as? Bool == true)
-    #expect(object?["change_label"] as? String == "none")
-    #expect(object?["snapshots"] as? Bool == false)
     let names = object?["lens_names"] as? [[String: String]]
     #expect(names == [["lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"]])
-    #expect(try decode(HubSettings.self, String(decoding: data, as: UTF8.self)) == settings)
+
+    let both = HubSettings.Change(lensNames: [lens]).applied(to: HubSettings.Change(snapshots: false).applied(to: HubSettings()))
+    #expect(both.lensNames == [lens] && !both.snapshots && both.changeLabel == "purple")
 }
 
 @Test func settingsFromAnOlderHubGetDefaults() throws {
     let settings = try decode(HubSettings.self, #"{"confirm_threshold": 5, "read_only": false}"#)
-    #expect(settings == HubSettings(confirmThreshold: 5))
-    #expect(settings.changeLabel == "purple" && settings.snapshots)
+    #expect(!settings.hasPreferences)
+    #expect(settings.changeLabel == "purple" && settings.snapshots && settings.confirmThreshold == 5)
+    let current = try decode(HubSettings.self, #"{"confirm_threshold": 5, "read_only": false, "change_label": "none", "snapshots": false, "lens_names": []}"#)
+    #expect(current.hasPreferences && current.changeLabel == "none")
 }
 
 // MARK: AI client configuration

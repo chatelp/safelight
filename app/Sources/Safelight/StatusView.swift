@@ -132,7 +132,7 @@ struct StatusView: View {
             Label("Settings", systemImage: "gearshape")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-            if let settings = model.status?.settings {
+            if let settings = model.settings {
                 Toggle(isOn: Binding(get: { settings.readOnly }, set: { model.setReadOnly($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Read-only mode")

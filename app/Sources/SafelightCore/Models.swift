@@ -38,8 +38,43 @@ public struct HubStatus: Decodable, Sendable, Equatable {
 }
 
 /// User settings of the hub (`GET`/`PUT /v1/settings`): the user's stable choices, which
-/// every AI client follows without being told.
-public struct HubSettings: Codable, Sendable, Equatable {
+/// every AI client follows without being told. Changes are sent as a `HubSettings.Change`
+/// holding only what changed, so an older hub still accepts the settings it knows.
+public struct HubSettings: Decodable, Sendable, Equatable {
+    /// The settings to change; nil fields are not sent.
+    public struct Change: Encodable, Sendable, Equatable {
+        public var confirmThreshold: Int?
+        public var readOnly: Bool?
+        public var changeLabel: String?
+        public var snapshots: Bool?
+        public var lensNames: [LensName]?
+
+        public init(
+            confirmThreshold: Int? = nil,
+            readOnly: Bool? = nil,
+            changeLabel: String? = nil,
+            snapshots: Bool? = nil,
+            lensNames: [LensName]? = nil
+        ) {
+            self.confirmThreshold = confirmThreshold
+            self.readOnly = readOnly
+            self.changeLabel = changeLabel
+            self.snapshots = snapshots
+            self.lensNames = lensNames
+        }
+
+        /// The same change applied to settings shown before the hub answers.
+        public func applied(to settings: HubSettings) -> HubSettings {
+            var result = settings
+            if let confirmThreshold { result.confirmThreshold = confirmThreshold }
+            if let readOnly { result.readOnly = readOnly }
+            if let changeLabel { result.changeLabel = changeLabel }
+            if let snapshots { result.snapshots = snapshots }
+            if let lensNames { result.lensNames = lensNames }
+            return result
+        }
+    }
+
     /// A lens Lightroom names wrongly (adapted or manual lens), with its real name.
     public struct LensName: Codable, Sendable, Equatable, Hashable {
         public var lightroom: String
@@ -60,19 +95,27 @@ public struct HubSettings: Codable, Sendable, Equatable {
     /// Whether Safelight saves a snapshot before changing a photo's geometry.
     public var snapshots: Bool
     public var lensNames: [LensName]
+    /// False for hubs before 0.2, which know only the first two settings.
+    public var hasPreferences: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case confirmThreshold, readOnly, changeLabel, snapshots, lensNames
+    }
 
     public init(
         confirmThreshold: Int = 50,
         readOnly: Bool = false,
         changeLabel: String = "purple",
         snapshots: Bool = true,
-        lensNames: [LensName] = []
+        lensNames: [LensName] = [],
+        hasPreferences: Bool = true
     ) {
         self.confirmThreshold = confirmThreshold
         self.readOnly = readOnly
         self.changeLabel = changeLabel
         self.snapshots = snapshots
         self.lensNames = lensNames
+        self.hasPreferences = hasPreferences
     }
 
     // Hubs before 0.2 send only the first two settings.
@@ -83,7 +126,8 @@ public struct HubSettings: Codable, Sendable, Equatable {
             readOnly: try container.decode(Bool.self, forKey: .readOnly),
             changeLabel: try container.decodeIfPresent(String.self, forKey: .changeLabel) ?? "purple",
             snapshots: try container.decodeIfPresent(Bool.self, forKey: .snapshots) ?? true,
-            lensNames: try container.decodeIfPresent([LensName].self, forKey: .lensNames) ?? []
+            lensNames: try container.decodeIfPresent([LensName].self, forKey: .lensNames) ?? [],
+            hasPreferences: container.contains(.changeLabel)
         )
     }
 }

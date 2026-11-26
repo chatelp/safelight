@@ -89,6 +89,8 @@ class Settings:
     def lightroom_lens(self, name: str) -> str:
         """The name Lightroom uses for the lens the user calls `name` (real name, exact or
         a unique part of it, any case); `name` itself when it is not a known real name."""
+        if any(p["lightroom"] == name for p in self.lens_names):
+            return name  # already Lightroom's name
         wanted = name.casefold().strip()
         exact = [p["lightroom"] for p in self.lens_names if p["real"].casefold() == wanted]
         if exact:

@@ -10,8 +10,13 @@ struct PreferencesView: View {
 
     var body: some View {
         Group {
-            if let settings = model.status?.settings {
+            if let settings = model.settings, settings.hasPreferences {
                 form(settings)
+            } else if model.status != nil {
+                Text("This Safelight hub is too old for these preferences. Restart the hub from the Safelight menu.")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(24)
             } else {
                 Text(model.hubProblem)
                     .foregroundStyle(.secondary)

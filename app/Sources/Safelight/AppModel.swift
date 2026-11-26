@@ -159,57 +159,61 @@ final class AppModel {
 
     // MARK: Settings
 
-    func setReadOnly(_ value: Bool) {
-        guard var settings = status?.settings else { return }
-        settings.readOnly = value
-        save(settings)
+    /// The settings as the user last set them: the hub's, plus changes still being sent,
+    /// so that a quick second change starts from the first one.
+    var settings: HubSettings? {
+        guard let hub = status?.settings else { return nil }
+        return pendingChanges.reduce(hub) { $1.applied(to: $0) }
     }
 
-    func setThreshold(_ value: Int) {
-        guard var settings = status?.settings else { return }
-        settings.confirmThreshold = max(0, value)
-        save(settings)
-    }
+    private var pendingChanges: [HubSettings.Change] = []
+
+    func setReadOnly(_ value: Bool) { save(.init(readOnly: value)) }
+
+    func setThreshold(_ value: Int) { save(.init(confirmThreshold: max(0, value))) }
 
     func setChangeLabel(_ value: String) {
-        guard var settings = status?.settings, HubSettings.labels.contains(value) else { return }
-        settings.changeLabel = value
-        save(settings)
+        guard HubSettings.labels.contains(value) else { return }
+        save(.init(changeLabel: value))
     }
 
-    func setSnapshots(_ value: Bool) {
-        guard var settings = status?.settings else { return }
-        settings.snapshots = value
-        save(settings)
-    }
+    func setSnapshots(_ value: Bool) { save(.init(snapshots: value)) }
 
     func addLensName(lightroom: String, real: String) {
-        guard var settings = status?.settings else { return }
+        guard var names = settings?.lensNames else { return }
         let lens = HubSettings.LensName(
             lightroom: lightroom.trimmingCharacters(in: .whitespaces),
             real: real.trimmingCharacters(in: .whitespaces)
         )
-        settings.lensNames.removeAll { $0.lightroom == lens.lightroom }
-        settings.lensNames.append(lens)
-        save(settings)
+        names.removeAll { $0.lightroom == lens.lightroom }
+        names.append(lens)
+        save(.init(lensNames: names))
     }
 
     func removeLensName(_ lens: HubSettings.LensName) {
-        guard var settings = status?.settings else { return }
-        settings.lensNames.removeAll { $0 == lens }
-        save(settings)
+        guard var names = settings?.lensNames else { return }
+        names.removeAll { $0 == lens }
+        save(.init(lensNames: names))
     }
 
-    private func save(_ settings: HubSettings) {
-        Task {
+    /// Changes are sent one after the other, in the order the user made them.
+    private func save(_ change: HubSettings.Change) {
+        guard status?.settings != nil else { return }
+        pendingChanges.append(change)
+        let previous = saving
+        saving = Task {
+            await previous?.value
             do {
-                try await api.update(settings: settings)
-                await refresh()
+                _ = try await api.update(change)
             } catch {
                 show(error.localizedDescription)
             }
+            await refresh()
+            pendingChanges.removeFirst()
         }
     }
+
+    private var saving: Task<Void, Never>?
 
     // MARK: Actions
 

@@ -216,6 +216,11 @@ def test_settings_validation_and_persistence(tmp_path):
     assert loaded.real_lens("DT 17mm F4 SAM") == "Canon TS-E 17mm f/4L"
     assert loaded.lightroom_lens("TS-E 17") == "DT 17mm F4 SAM"
     assert loaded.lightroom_lens("FE 24-70mm F4 ZA OSS") == "FE 24-70mm F4 ZA OSS"
+    # A Lightroom name that is also part of another lens's real name is left alone.
+    tricky = Settings(lens_names=[{"lightroom": "X", "real": "Canon TS-E 17mm"}, *lens])
+    assert tricky.lightroom_lens("TS-E 17") == "TS-E 17"  # matches two real names: unchanged
+    clash = Settings(lens_names=[{"lightroom": "17mm", "real": "Some 17mm lens"}])
+    assert clash.lightroom_lens("17mm") == "17mm"
     for bad in (
         {"confirm_threshold": -1},
         {"read_only": "yes"},
