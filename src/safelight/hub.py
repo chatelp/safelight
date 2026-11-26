@@ -122,6 +122,24 @@ MAX_REVIEW = 200
 REVIEW_SHOWN = 20
 
 
+def _review_entry(item: Any, client: str | None = None) -> dict[str, Any] | None:
+    """One photo to check, with the right types (entries come from relays or a file the
+    user may edit); None when it has no usable id."""
+    if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"]:
+        return None
+
+    def text(value: Any, limit: int) -> str | None:
+        return str(value)[:limit] if isinstance(value, str | int | float) and value != "" else None
+
+    return {
+        "id": item["id"][:80],
+        "file": text(item.get("file"), 200),
+        "reason": text(item.get("reason"), 300) or "",
+        "client": client if client is not None else text(item.get("client"), 80),
+        "added_at": text(item.get("added_at"), 40) or _now_iso(),
+    }
+
+
 def _load_review(path: Path | None) -> list[dict[str, Any]]:
     if path is None:
         return []
@@ -129,9 +147,19 @@ def _load_review(path: Path | None) -> list[dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
-    return (
-        [e for e in data if isinstance(e, dict) and e.get("id")] if isinstance(data, list) else []
-    )
+    entries = [_review_entry(item) for item in data] if isinstance(data, list) else []
+    return _unique([e for e in entries if e is not None])
+
+
+def _unique(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The first entry of each photo."""
+    seen: set[str] = set()
+    out = []
+    for entry in entries:
+        if entry["id"] not in seen:
+            seen.add(entry["id"])
+            out.append(entry)
+    return out
 
 
 # An approval stays in the app this long after the relay's last wait for it.
@@ -291,20 +319,9 @@ class Hub:
     def add_review(self, items: list[dict[str, Any]], client: str) -> int:
         """Photos an AI client changed and the user should look at: newest first, one entry
         per photo (a newer reason replaces an older one)."""
-        added = []
-        for item in items:
-            photo_id = str(item.get("id") or "")[:80]
-            if not photo_id:
-                continue
-            added.append(
-                {
-                    "id": photo_id,
-                    "file": str(item.get("file") or "")[:200] or None,
-                    "reason": str(item.get("reason") or "")[:300],
-                    "client": client,
-                    "added_at": _now_iso(),
-                }
-            )
+        entries = [_review_entry({**item, "added_at": None}, client) for item in items]
+        # In the batch's order; for a photo given twice, the last one wins.
+        added = _unique([e for e in reversed(entries) if e is not None])[::-1]
         ids = {entry["id"] for entry in added}
         self.review = (added + [e for e in self.review if e["id"] not in ids])[:MAX_REVIEW]
         self._save_review()
@@ -312,7 +329,7 @@ class Hub:
 
     def review_done(self, ids: list[str]) -> int:
         before = len(self.review)
-        gone = {str(i) for i in ids}
+        gone = {i for i in ids if isinstance(i, str)}
         self.review = [e for e in self.review if e["id"] not in gone]
         self._save_review()
         return before - len(self.review)
