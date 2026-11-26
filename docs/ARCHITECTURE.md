@@ -158,6 +158,14 @@ plugin acts as a **client of the hub**:
 The commands the plugin understands are listed in
 [PLUGIN_COMMANDS.md](PLUGIN_COMMANDS.md).
 
+The plugin also gives each photo three **Safelight fields**, kept in the catalog and
+shown in the Metadata panel (`MetadataDefinition.lua`, "Safelight" set): *Validated*
+(the user approves the photo's edits), *Geometry* (straightened by Safelight, or
+corrected by the user) and *Reject reason*. They are facts about one photo that every
+AI client must respect: the plugin's router takes validated photos out of every
+command that changes edits, whatever the client asked. Adding or changing a field
+needs a new `schemaVersion`; Lightroom then asks once to update the catalog.
+
 Measured on Lightroom Classic 16.0.1 (roadmap lot L1): a command round trip
 takes 1.7 ms median (2.1 ms at the 95th percentile); the plugin connects about
 8 s after Lightroom loads it and reconnects within 1 to 2.5 s after a hub
@@ -203,12 +211,11 @@ What Safelight learns while working on real photos must live in Safelight, so th
 AI client benefits, not in the memory of one conversation. For each new piece of
 knowledge, the first question that gets a yes decides where it goes:
 
-1. **Must it never be forgotten?** (never overwrite the user's corrections, always ask
-   before overwriting files) → **code**: the plugin, the hub's policy or the tool itself
+1. **Must it never be forgotten?** (never change a photo the user validated, never
+   overwrite the user's corrections, always ask before overwriting files) → **code**: the plugin, the hub's policy or the tool itself
    enforces it, whatever the AI asks.
 2. **Is it a fact about one photo?** (the user validated it, who corrected the
-   geometry, why it was rejected) → **the catalog**: Safelight's own fields on the photo
-   (in progress).
+   geometry, why it was rejected) → **the catalog**: Safelight's own fields on the photo.
 3. **Is it the user's stable choice?** (color for changed photos, snapshots, real lens
    names, approval threshold) → **Safelight's settings**, edited in the app.
 4. **Is it a sequence of steps for a job?** (straighten an exhibition folder, sort

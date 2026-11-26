@@ -866,10 +866,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         before: dict[str, dict[str, Any]] = {}  # geometry to put back if it goes wrong
         lens: dict[str, dict[str, Any]] = {}  # settings the lines found depend on
         chosen_plans: dict[str, Plan] = {}
+        validated: list[dict[str, Any]] = []  # the user approved their edits: never touched
         for photo in photos:
+            entry = {"id": photo["uuid"], "file": photo.get("file_name")}
+            if photo.get("validated"):
+                validated.append(entry)
+                continue
             current = await runner.read(ctx, "develop.get", {"uuids": [photo["uuid"]]})
             settings = current.get("settings") or {}
-            entry = {"id": photo["uuid"], "file": photo.get("file_name")}
             if chosen_lines is not None:
                 refusal = _choose(photo["uuid"], chosen_lines[photo["uuid"]], settings)
                 if isinstance(refusal, Plan):
@@ -947,6 +951,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         "left_to_user": len(left_to_user),
                         "rotated_skipped": len(rotated),
                         "already_corrected_skipped": len(already),
+                        "validated_skipped": len(validated),
                         "stacked_frames_skipped": skipped_stacked,
                     },
                     "straightened": done,
@@ -954,6 +959,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                     "left_to_user": left_to_user,
                     "rotated_skipped": rotated,
                     "already_corrected_skipped": already,
+                    "validated_skipped": validated,
                     "notes": notes,
                 },
             )
@@ -964,26 +970,35 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 return report([])
             raise ToolError(
                 f"Nothing to straighten: {len(already)} photos already have an Upright "
-                f"correction and {len(rotated)} are rotated, which is not supported yet."
+                f"correction, {len(validated)} were validated by the user (never changed) and "
+                f"{len(rotated)} are rotated, which is not supported yet."
             )
         history = "Safelight: Straighten" + (" (chosen lines)" if chosen_lines else "")
 
-        async def set_label(photo: dict[str, Any]) -> str:
-            """Labels a changed photo; returns what its label is now, or what went wrong."""
-            if photo.get("label") not in (None, label):
-                return f"kept {photo['label']}"
+        async def write(photo: dict[str, Any], fields: dict[str, Any]) -> bool:
             reply = await runner.settle(
                 await hub_client.run(
                     "metadata.set",
-                    {"uuids": [photo["uuid"]], "fields": {"label": label}},
+                    {"uuids": [photo["uuid"]], "fields": fields},
                     wait_s=30,
                     client=_client_name(ctx),
                 )
             )
             failed = (reply.get("result") or {}).get("failures")
-            return (
-                str(label) if reply.get("state") == JobState.SUCCEEDED and not failed else "failed"
-            )
+            return reply.get("state") == JobState.SUCCEEDED and not failed
+
+        async def mark(photo: dict[str, Any]) -> dict[str, str]:
+            """Gives a straightened photo the user's color and records in the catalog that
+            Safelight straightened it; says what its label is now, and what went wrong."""
+            out: dict[str, str] = {}
+            if label:
+                if photo.get("label") not in (None, label):
+                    out["label"] = f"kept {photo['label']}"
+                else:
+                    out["label"] = str(label) if await write(photo, {"label": label}) else "failed"
+            if not await write(photo, {"geometry_by": "safelight"}):
+                out["geometry_field"] = "failed"
+            return out
 
         async def apply(photo_id: str, settings: dict[str, Any], name: str) -> str | None:
             """Write settings on one photo; returns what went wrong, or None."""
@@ -1081,7 +1096,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         chosen = (
                             {"lines": [i + 1 for i in plan.guide_lines]} if chosen_lines else {}
                         )
-                        labelled = {"label": await set_label(photo)} if label else {}
+                        labelled = await mark(photo)
                         done.append({**entry, **plan.as_dict(), **chosen, **labelled})
                         continue
                     reason = f"Lightroom refused it: {error}"
@@ -1339,6 +1354,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         )
         if created.state != "succeeded" or not adjustments:
             return created
+        if (created.result or {}).get("validated"):
+            created.message = "The user validated this photo: Safelight does not change it."
+            return created
         mask_id = (created.result or {}).get("mask_id")
         if not mask_id:
             created.message = "The mask was created but Lightroom did not report its id."
@@ -1407,9 +1425,28 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             Field(description='{"latitude": 48.85, "longitude": 2.35}'),
         ] = None,
         remove_gps: bool = False,
+        validated: Annotated[
+            bool | None,
+            Field(
+                description="Safelight's Validated field: true when the user approves the "
+                "photo's edits, so Safelight never changes them. Only when the user says so."
+            ),
+        ] = None,
+        reject_reason: Annotated[
+            str | None,
+            Field(
+                description="Why the photo is rejected (duplicate, passer-by, flare...), kept "
+                'in the catalog; "" clears it'
+            ),
+        ] = None,
+        geometry_by: Annotated[
+            Literal["safelight", "user", "none"] | None,
+            Field(description="Who last corrected the perspective (Safelight's field)"),
+        ] = None,
         confirmation_token: ConfirmationToken = None,
     ) -> ActionResult:
-        """Set ratings, flags, color labels, titles, captions, IPTC fields or GPS location."""
+        """Set ratings, flags, color labels, titles, captions, IPTC fields or GPS location,
+        and Safelight's own fields: validated, reject reason, who corrected the geometry."""
         fields: dict[str, Any] = {
             key: value
             for key, value in {
@@ -1427,6 +1464,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 "country": country,
                 "event": event,
                 "gps": gps,
+                "validated": validated,
+                "reject_reason": reject_reason,
+                "geometry_by": geometry_by,
             }.items()
             if value is not None
         }
