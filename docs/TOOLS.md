@@ -4,7 +4,8 @@ The tools an AI client (Claude, Cursor, Codex…) sees when Safelight is connect
 are built on the [plugin commands](PLUGIN_COMMANDS.md) and go through the hub's policy:
 tools marked **read-only** never change the catalog, so clients may run them without
 asking; the others respect read-only mode and ask for approval past the confirmation
-threshold or for changes that are hard to undo.
+threshold or for changes that are hard to undo. When the Safelight menu bar app is
+open, the user answers there; otherwise the AI client asks.
 
 Photos are identified by id. Tools that work on photos take `photo_ids`, or use the
 photos selected in Lightroom (`scope: "selected"`, the default) or the active photo

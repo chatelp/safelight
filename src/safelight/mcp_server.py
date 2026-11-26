@@ -39,6 +39,9 @@ from .upright import (
 )
 
 STRAIGHTEN_SNAPSHOT = "Before Safelight straighten"
+# How long a change waits for the user's answer in the Safelight app before the AI
+# client asks instead.
+APP_APPROVAL_WAIT_S = 120.0
 
 INSTRUCTIONS = """\
 Safelight lets you work in the user's Adobe Lightroom Classic catalog.
@@ -240,11 +243,67 @@ class Runner:
         reply = await self.client.run(
             command, params, wait_s=30, confirm=confirmation_token, client=name
         )
+        if reply.get("state") == JobState.CONFIRMATION_REQUIRED:
+            # The Safelight app first, when it is open; then the AI client.
+            answer = await self._ask_app(ctx, reply)
+            token = (reply.get("confirmation") or {}).get("token")
+            if answer == "approved":
+                reply = await self.client.run(
+                    command, params, wait_s=30, confirm=token, client=name
+                )
+            elif answer == "declined":
+                return ActionResult(
+                    state="declined", message="The user declined this change in the Safelight app."
+                )
         if reply.get("state") == JobState.CONFIRMATION_REQUIRED and _supports_elicitation(ctx):
             reply = await self._ask_user(ctx, command, params, reply, name)
             if isinstance(reply, ActionResult):
                 return reply
         return self.outcome(reply)
+
+    async def _ask_app(self, ctx: Context | None, reply: dict[str, Any]) -> str | None:
+        """Waits for the user's answer in the Safelight app: approved, declined, or None
+        when the app is closed or nobody answered in time (then the AI client asks)."""
+        approval_id = (reply.get("confirmation") or {}).get("approval_id")
+        if not approval_id:
+            return None
+        try:
+            status = await self.client.status(start=False)
+            if not (status.get("app") or {}).get("connected"):
+                return None
+        except HubUnavailable:
+            return None
+        try:
+            deadline = time.monotonic() + APP_APPROVAL_WAIT_S
+            while (left := deadline - time.monotonic()) > 0:
+                if ctx is not None:
+                    with contextlib.suppress(Exception):  # keeps the client's request alive
+                        await ctx.report_progress(
+                            APP_APPROVAL_WAIT_S - left,
+                            APP_APPROVAL_WAIT_S,
+                            "Waiting for the user's approval in the Safelight app",
+                        )
+                answer = await self.client.approval(approval_id, wait_s=min(10.0, left))
+                state = answer.get("state")
+                if state in ("approved", "declined"):
+                    return state
+                if state != "pending":
+                    return None
+        except HubUnavailable:
+            return None
+        except BaseException:
+            # The AI client cancelled: take the request out of the app, then stop.
+            with anyio.CancelScope(shield=True), contextlib.suppress(HubUnavailable):
+                await self.client.decide(approval_id, "withdrawn")
+            raise
+        # No answer in time: take the request out of the app; the AI client asks instead.
+        # An answer given at the very last moment still counts.
+        try:
+            last = await self.client.decide(approval_id, "withdrawn")
+        except HubUnavailable:
+            return None
+        state = last.get("state")
+        return state if state in ("approved", "declined") else None
 
     async def _ask_user(
         self, ctx: Context | None, command: str, params: dict[str, Any], reply: dict, name: str

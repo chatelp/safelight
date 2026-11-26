@@ -30,11 +30,38 @@ public struct HubStatus: Decodable, Sendable, Equatable {
         public var id: String { name }
     }
 
+    /// A change waiting for the user's approval, which the app can give (hubs from 0.2).
+    public struct Approval: Decodable, Sendable, Equatable, Identifiable {
+        public var id: String
+        public var command: String
+        public var client: String
+        public var summary: String?
+        public var reason: String
+        public var affected: Int?
+        public var expiresInS: Int
+
+        public init(id: String, command: String, client: String, summary: String?, reason: String, affected: Int?, expiresInS: Int) {
+            self.id = id
+            self.command = command
+            self.client = client
+            self.summary = summary
+            self.reason = reason
+            self.affected = affected
+            self.expiresInS = expiresInS
+        }
+
+        /// What the change does, in plain words.
+        public var title: String {
+            summary ?? ActivityText.action(command)
+        }
+    }
+
     public var hub: Hub
     public var plugin: Plugin
     public var jobs: Jobs
     public var clients: [Client]
     public var settings: HubSettings
+    public var approvals: [Approval]?
 }
 
 /// User settings of the hub (`GET`/`PUT /v1/settings`): the user's stable choices, which

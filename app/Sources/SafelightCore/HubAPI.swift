@@ -99,6 +99,17 @@ public struct HubAPI: Sendable {
         try Self.decoder.decode(ActivityPage.self, from: try await request("GET", "/v1/activity?after=\(seq)"))
     }
 
+    /// The user's answer to a change waiting for approval. Returns the decision the hub
+    /// kept: the answer given, or "withdrawn" / "unknown" when it came too late.
+    @discardableResult
+    public func decide(approval id: String, approve: Bool) async throws -> String {
+        let body = try JSONSerialization.data(withJSONObject: ["decision": approve ? "approved" : "declined"])
+        let path = "/v1/approvals/" + (id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)
+        let data = try await request("POST", path, body: body)
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return object?["state"] as? String ?? "unknown"
+    }
+
     @discardableResult
     /// Sends only the settings that change (an older hub refuses settings it does not know).
     public func update(_ change: HubSettings.Change) async throws -> HubSettings {

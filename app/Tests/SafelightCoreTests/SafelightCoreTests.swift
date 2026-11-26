@@ -24,6 +24,25 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
     #expect(status.settings == HubSettings(confirmThreshold: 50, readOnly: false, hasPreferences: false))
 }
 
+@Test func decodesApprovalsAndTheirActivity() throws {
+    let status = try decode(HubStatus.self, """
+        {"hub": {"version": "0.2.0", "protocol": 1, "pid": 42, "uptime_s": 3.5, "shutting_down": false},
+         "plugin": {"connected": true}, "jobs": {"queued": 0, "running": 0}, "clients": [],
+         "settings": {"confirm_threshold": 50, "read_only": false},
+         "approvals": [{"id": "a1", "command": "metadata.set", "client": "claude-ai", "summary": null,
+                        "reason": "This change affects 80 photos, more than the limit of 50.",
+                        "affected": 80, "expires_in_s": 590}]}
+        """)
+    let approval = try #require(status.approvals?.first)
+    #expect(approval.title == "Changed metadata" && approval.affected == 80)
+    #expect(try decode(HubStatus.self, statusJSON).approvals == nil)  // an older hub
+    let page = try decode(ActivityPage.self, """
+        {"last_seq": 1, "events": [{"seq": 1, "time": "2026-11-26T20:00:00+00:00", "kind": "approval",
+          "client": "claude-ai", "command": "metadata.set", "state": "declined", "affected": 80}]}
+        """)
+    #expect(ActivityText.line(for: page.events[0]) == "Declined in Safelight: Changed metadata (80 photos)")
+}
+
 @Test func stateFollowsTheHub() throws {
     var status = try decode(HubStatus.self, statusJSON)
     #expect(SafelightState(status: nil) == .stopped)

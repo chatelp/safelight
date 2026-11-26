@@ -247,6 +247,16 @@ class HubClient:
     async def activity(self, after: int = 0) -> dict[str, Any]:
         return await self._call_hub("GET", f"/v1/activity?after={int(after)}")
 
+    async def approval(self, approval_id: str, wait_s: float = 0.0) -> dict[str, Any]:
+        """The app's answer to a confirmation: pending, approved, declined, withdrawn."""
+        query = urllib.parse.urlencode({"wait_s": wait_s})
+        path = f"/v1/approvals/{urllib.parse.quote(approval_id)}?{query}"
+        return await self._call_hub("GET", path, timeout=wait_s + 10.0)
+
+    async def decide(self, approval_id: str, decision: str) -> dict[str, Any]:
+        path = f"/v1/approvals/{urllib.parse.quote(approval_id)}"
+        return await self._call_hub("POST", path, {"decision": decision})
+
     async def settings(self, changes: dict[str, Any] | None = None) -> dict[str, Any]:
         if changes:
             return await self._call_hub("PUT", "/v1/settings", changes)
