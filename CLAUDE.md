@@ -26,9 +26,7 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md). This file holds what those don't: how
 ## Testing against the real Lightroom
 
 - The plugin is loaded from this checkout through Lightroom's Plug-in Manager. After a
-  Lua change, reload it there (Plug-in Manager, Safelight, Reload); a change to
-  `MetadataDefinition.lua` needs a new `schemaVersion`, and Lightroom then asks once to
-  update the catalog.
+  Lua change, reload it there (Plug-in Manager, Safelight, Reload).
 - The catalog is the maintainer's real one. Read freely (searches, previews). Write only
   on test photos: virtual copies named "Safelight Test …" in the "Safelight Tests"
   collection, unless the maintainer says otherwise. Never overwrite their corrections.
@@ -42,9 +40,7 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md). This file holds what those don't: how
 - Never commit the Lightroom Classic SDK (`vendor/` is git-ignored: Adobe's license).
 - The MCP server uses MCP SDK 2.x (`mcp.server.mcpserver.MCPServer`); tool results are
   pydantic models (TypedDict breaks on Python 3.11).
-- Every plugin command must have a policy in `policy.py` (a test checks it). Commands
-  that change edits are listed in `EDITING_COMMANDS` and in `CommandRouter.lua`
-  (`EDITING`); a test checks they match.
+- Every plugin command must have a policy in `policy.py` (a test checks it).
 - Lua: use `LrTasks.pcall`, not `pcall`, around SDK calls that may yield.
 - The version lives only in `VERSION`; run `uv run python scripts/sync_version.py`.
 - Wording in the product follows docs/DESIGN.md: plain words, no jargon.

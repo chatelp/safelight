@@ -199,11 +199,12 @@ What Safelight learns while working on real photos must live in Safelight, so th
 AI client benefits, not in the memory of one conversation. For each new piece of
 knowledge, the first question that gets a yes decides where it goes:
 
-1. **Must it never be forgotten?** (never change a photo the user validated, never
-   overwrite the user's corrections) → **code**: the plugin, the hub's policy or the
-   tool itself enforces it, whatever the AI asks.
-2. **Is it a fact about one photo?** (validated, who corrected the geometry, why it was
-   rejected) → **the catalog**: Safelight's fields on the photo.
+1. **Must it never be forgotten?** (never overwrite the user's corrections, always ask
+   before overwriting files) → **code**: the plugin, the hub's policy or the tool itself
+   enforces it, whatever the AI asks.
+2. **Is it a fact about one photo?** (the user validated it, who corrected the
+   geometry, why it was rejected) → **the catalog**: Safelight's own fields on the photo
+   (in progress).
 3. **Is it the user's stable choice?** (color for changed photos, snapshots, real lens
    names, approval threshold) → **Safelight's settings**, edited in the app.
 4. **Is it a sequence of steps for a job?** (straighten an exhibition folder, sort

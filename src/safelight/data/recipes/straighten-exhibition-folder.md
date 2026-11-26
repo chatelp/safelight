@@ -6,9 +6,9 @@ folder "{folder}", the way the user expects.
 2. Find the photos with search_photos, filters {{"folder": "{folder}"}}, and look at them
    with contact_sheet. Only the top photo of a stack is straightened (the frames under an
    HDR merge are skipped).
-3. Leave alone the photos the user validated (Safelight skips them) and the photos that
-   already have an Upright correction: it may be the user's own work. Use
-   replace_existing_upright only if the user asks for exactly that.
+3. Leave alone the photos that already have an Upright correction (Safelight skips
+   them): it may be the user's own work. Use replace_existing_upright only if the user
+   asks for exactly that.
 4. Before changing anything, tell the user how many photos will be straightened and ask.
 5. Run straighten_photos on the folder with guides "verticals_and_frontal".
 6. Check every result:
@@ -25,5 +25,4 @@ folder "{folder}", the way the user expects.
 7. Thin white or black borders on HDR merges come from merging without Lightroom's Auto
    Crop. Do not crop them unless the user asks.
 8. Report how many photos were straightened, which ones need the user's eye, and that
-   they carry the user's color. Suggest that the user ticks Validated (Metadata panel,
-   Safelight set) on the photos they approve: Safelight then never changes them again.
+   they carry the user's color.
