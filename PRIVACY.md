@@ -1,6 +1,6 @@
 # Privacy policy
 
-Last updated: November 25, 2026. This covers the Safelight software: the MCP relay, the
+Last updated: November 26, 2026. This covers the Safelight software: the MCP relay, the
 hub, the Lightroom Classic plugin and the menu bar app.
 
 ## In short
@@ -45,9 +45,10 @@ for features that use Adobe's servers.
 | `~/Library/Application Support/Safelight/settings.json` | your settings |
 | `~/Library/Application Support/Safelight/hub.log` | technical log of the hub |
 | `safelight.log` in the temporary folder, and Lightroom's plug-in log folder | technical log of the plugin: connections, photo ids, and error messages, which can contain file names or paths |
+| `~/Library/Application Support/Safelight/straighten/` | for each photo straightened with `straighten_photos`: the preview it analysed (1600 px, without the correction), the straight lines found and the correction written, so the AI client can choose other lines later. Readable by your user account only; files older than 90 days are removed, and you can delete the folder at any time |
 | memory only | recent activity and results of recent jobs (results for about an hour), lost when the hub stops |
 
-Previews made for a tool call are not written to disk by Safelight. If you use the menu bar
+Other previews made for a tool call are not written to disk by Safelight. If you use the menu bar
 app to set up an AI client, it adds a Safelight entry to that client's configuration and
 keeps a backup copy next to it.
 

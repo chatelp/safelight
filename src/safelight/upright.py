@@ -19,8 +19,20 @@ Lines are found on a preview rendered without any transform:
 
 Up to four of the lines kept become the guides: the longest vertical on each side and
 the longest horizontal at the top and at the bottom. The matrix is fitted to those
-guides. Moving a guide in Lightroom replaces it with Lightroom's own, which is exact for
-the guides but not a rotation (see docs/LIGHTROOM_API.md).
+guides.
+
+With two vertical and two horizontal guides (a view facing a wall), the correction is
+made exact: the four guides come out exactly vertical and horizontal, like Lightroom's
+own Guided Upright, and the remaining freedom (scale and position along each axis) is
+taken from the rotation, so proportions stay those of the camera rotation. A rotation
+alone often leaves a few tenths of a degree on such views, more with a shifted
+tilt-shift lens (the rotation assumes the optical centre is the image centre). When the exact
+correction moves the image too far from the rotation, a guide is probably wrong and the
+rotation is kept.
+
+The AI client can also choose the guides itself among the numbered lines found
+(`plan_from_lines`). Moving a guide in Lightroom replaces the matrix with Lightroom's
+own (see docs/LIGHTROOM_API.md).
 """
 
 from __future__ import annotations
@@ -42,6 +54,9 @@ MIN_LENGTH = 0.12  # fraction of the image height (verticals) or width (horizont
 INLIER_DEG = 0.6  # lines further than this from the fitted correction are dropped
 REVIEW_DEG = 0.3  # guides straightened less well than this deserve a look
 MAX_CORRECTION_DEG = 15.0  # larger rotations are almost always a detection error
+MAX_EXACT_SHIFT = 0.015  # exact correction: furthest a corner may move from the rotation
+MIN_VERTICAL_SPREAD = 0.15  # chosen verticals at least this far apart (of the width)
+DISAGREE_DEG = 0.45  # chosen verticals this far from the automatic ones: let the user decide
 EDGE_MARGIN = 0.01  # lines hugging the image border are not lines of the scene
 ANALYSIS_PX = 1600
 
@@ -111,6 +126,12 @@ class Plan:
     lines_found: int
     lines_used: int
     warnings: list[str] = field(default_factory=list)
+    model: str = "rotation"  # or "exact": see the module docstring
+    lines: list[Line] = field(default_factory=list)  # every line found; numbered from 1
+    guide_lines: list[int] = field(default_factory=list)  # indexes in `lines` of the guides
+    width: int = 0  # the photo's size and focal length (pixels) the plan was made for
+    height: int = 0
+    focal_px: float = 0.0
 
     def settings(self) -> dict[str, Any]:
         """Develop settings that apply this correction."""
@@ -126,6 +147,7 @@ class Plan:
 
     def as_dict(self) -> dict[str, Any]:
         return {
+            "model": self.model,
             "pitch_deg": round(self.pitch_deg, 2),
             "yaw_deg": round(self.yaw_deg, 2),
             "roll_deg": round(self.roll_deg, 2),
@@ -317,6 +339,85 @@ def fit_rotation(
     return pitch, yaw, roll
 
 
+def _is_vertical(segment: tuple[float, float, float, float]) -> bool:
+    x1, y1, x2, y2 = segment
+    return abs(y2 - y1) > abs(x2 - x1)
+
+
+def _corners(matrix: np.ndarray) -> np.ndarray:
+    return np.array([_project(matrix, x, y) for x, y in ((0, 0), (1, 0), (0, 1), (1, 1))])
+
+
+def exact_homography(
+    segments: list[tuple[float, float, float, float]],
+    width: int,
+    height: int,
+    near: np.ndarray,
+) -> np.ndarray | None:
+    """Matrix that makes two vertical and two horizontal segments exactly vertical and
+    horizontal, as close as possible to `near` (a camera rotation fitted to them).
+
+    Such a matrix sends the meeting point of the verticals straight up, the meeting point
+    of the horizontals sideways, and the line through both points to infinity. That fixes
+    it up to a scale and a shift along each axis, taken from `near`. None when the
+    segments are not two verticals and two horizontals, or when the result moves a corner
+    of the image further than MAX_EXACT_SHIFT (of the long side) from `near`."""
+    verticals = [s for s in segments if _is_vertical(s)]
+    horizontals = [s for s in segments if not _is_vertical(s)]
+    if len(verticals) != 2 or len(horizontals) != 2:
+        return None
+
+    def line(segment: tuple[float, float, float, float]) -> np.ndarray:
+        x1, y1, x2, y2 = segment
+        return np.cross([x1 * width, y1 * height, 1.0], [x2 * width, y2 * height, 1.0])
+
+    up = np.cross(line(verticals[0]), line(verticals[1]))
+    side = np.cross(line(horizontals[0]), line(horizontals[1]))
+    if np.linalg.norm(up) == 0 or np.linalg.norm(side) == 0:
+        return None
+    up, side = up / np.linalg.norm(up), side / np.linalg.norm(side)
+    horizon = np.cross(up, side)
+    base = np.array([np.cross(up, horizon), np.cross(side, horizon), horizon])
+    if abs(np.linalg.det(base)) < 1e-12:
+        return None
+    to_pixels = np.diag([float(width), float(height), 1.0])
+    base = np.linalg.inv(to_pixels) @ base @ to_pixels
+    # Scale and shift along each axis: least squares against `near` on a grid of points.
+    grid = np.linspace(0.0, 1.0, 9)
+    points = np.array([(x, y, 1.0) for x in grid for y in grid]).T
+    mapped = base @ points
+    if np.any(np.abs(mapped[2]) < 1e-12):
+        return None
+    mapped = mapped[:2] / mapped[2]
+    target = near @ points
+    target = target[:2] / target[2]
+    fit = np.eye(3)
+    for axis in (0, 1):
+        design = np.column_stack([mapped[axis], np.ones(mapped.shape[1])])
+        (scale, shift), *_ = np.linalg.lstsq(design, target[axis], rcond=None)
+        fit[axis, axis], fit[axis, 2] = scale, shift
+    matrix = fit @ base
+    if abs(matrix[2, 2]) < 1e-12:
+        return None
+    matrix = matrix / matrix[2, 2]
+    moved = np.abs((_corners(matrix) - _corners(near)) * [width, height]).max()
+    if not np.isfinite(moved) or moved > MAX_EXACT_SHIFT * max(width, height):
+        return None
+    return matrix
+
+
+def disagreement_deg(
+    matrix: np.ndarray,
+    verticals: list[tuple[float, float, float, float]],
+    other_matrix: np.ndarray,
+    other_verticals: list[tuple[float, float, float, float]],
+) -> float:
+    """How far two corrections are from agreeing on the verticals: the worst angle left
+    on each one's verticals by the other one's matrix."""
+    left = guide_errors(matrix, other_verticals) + guide_errors(other_matrix, verticals)
+    return max((abs(math.degrees(e)) for e in left), default=0.0)
+
+
 # -- planning -----------------------------------------------------------------------------
 
 
@@ -438,24 +539,83 @@ def plan(
     )
     if close and abs(math.degrees(refined[1])) <= MAX_YAW_DEG:
         pitch, yaw, roll = refined
-    matrix = homography(pitch, yaw, roll, width, height, f)
+    result = _finish(
+        (pitch, yaw, roll), segments, width, height, f, lines_found=len(lines), lines_used=len(keep)
+    )
+    result.lines = lines
+    result.guide_lines = [lines.index(g) for g in guides]
+    if sum(g.vertical for g in guides) < 2:
+        result.warnings.append("only one vertical line found")
+    return result
+
+
+def _finish(
+    rotation: tuple[float, float, float],
+    segments: list[tuple[float, float, float, float]],
+    width: int,
+    height: int,
+    f: float,
+    lines_found: int,
+    lines_used: int,
+) -> Plan:
+    """The plan for a fitted rotation, made exact when the guides allow it."""
+    matrix = homography(*rotation, width, height, f)
+    warnings = []
+    model = "rotation"
+    if sum(map(_is_vertical, segments)) == 2 and len(segments) == 4:
+        exact = exact_homography(segments, width, height, matrix)
+        if exact is None:
+            warnings.append("the four guides do not fit one view: maybe a wrong line, check it")
+        else:
+            matrix, model = exact, "exact"
     worst = max(abs(math.degrees(e)) for e in guide_errors(matrix, segments))
     result = Plan(
         guides=segments,
         matrix=matrix,
-        pitch_deg=math.degrees(pitch),
-        yaw_deg=math.degrees(yaw),
-        roll_deg=math.degrees(roll),
+        pitch_deg=math.degrees(rotation[0]),
+        yaw_deg=math.degrees(rotation[1]),
+        roll_deg=math.degrees(rotation[2]),
         guide_error_deg=worst,
-        lines_found=len(lines),
-        lines_used=len(keep),
+        lines_found=lines_found,
+        lines_used=lines_used,
+        warnings=warnings,
+        model=model,
+        width=width,
+        height=height,
+        focal_px=f,
     )
     if worst > REVIEW_DEG:
         result.warnings.append(f"guides straightened within {worst:.2f} deg only: check it")
     if max(abs(result.pitch_deg), abs(result.yaw_deg), abs(result.roll_deg)) > MAX_CORRECTION_DEG:
         result.warnings.append("very large correction: probably a wrong line, check it")
-    if sum(g.vertical for g in guides) < 2:
-        result.warnings.append("only one vertical line found")
+    return result
+
+
+def plan_from_lines(
+    lines: list[Line], chosen: list[int], width: int, height: int, f: float
+) -> Plan:
+    """The correction for guides chosen among `lines` (indexes). Raises ValueError when
+    the choice cannot make a Guided Upright correction."""
+    if not 2 <= len(chosen) <= 4:
+        raise ValueError("choose two to four lines")
+    if len(set(chosen)) != len(chosen) or not all(0 <= i < len(lines) for i in chosen):
+        raise ValueError(f"line numbers go from 1 to {len(lines)}, each at most once")
+    picked = [lines[i] for i in chosen]
+    if not any(line.vertical for line in picked):
+        raise ValueError("choose at least one vertical line")
+    across = [line.center[0] for line in picked if line.vertical]
+    if len(across) >= 2 and max(across) - min(across) < MIN_VERTICAL_SPREAD:
+        # Two verticals close together cannot tell a tilt from a convergence.
+        raise ValueError("the verticals are too close together: take one on each side")
+    segments = [line.segment for line in picked]
+    rotation = fit_rotation(segments, width, height, f)
+    result = _finish(
+        rotation, segments, width, height, f, lines_found=len(lines), lines_used=len(picked)
+    )
+    if any("very large" in w for w in result.warnings):
+        raise ValueError("these lines ask for a very large correction: probably a wrong line")
+    result.lines = lines
+    result.guide_lines = list(chosen)
     return result
 
 

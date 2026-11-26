@@ -264,5 +264,9 @@ Found while building the plugin commands (lot L3):
 - As soon as guides are touched in Lightroom, it replaces the matrix with its own: exact for
   the guides, but not a camera rotation. With two vertical guides only it shears the image
   (horizontals stay as they are), so right angles change by the roll of the photo.
+- With two vertical and two horizontal guides, Lightroom's matrix is fully set by the
+  guides up to a scale and a shift along each axis. On 14 of these corrections, the
+  proportions it keeps at the image centre match those of a camera rotation fitted to the
+  same guides within 0.05 %, which is how Safelight completes its own exact matrix.
 - Not checked yet: the coordinate frame of guides on photos with a non-default
   `orientation`; Safelight skips those.

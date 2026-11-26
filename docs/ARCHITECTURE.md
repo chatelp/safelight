@@ -24,7 +24,7 @@ The process an AI client launches over stdio. It exposes Safelight's tools,
 validates arguments, and forwards each call to the hub. If the hub is not
 running, the relay starts it in the background (in about half a second). It
 passes the AI client's own name (for example "Claude Desktop") to the hub for the
-activity log. It exposes 24 tools, listed in [TOOLS.md](TOOLS.md): read-only tools
+activity log. It exposes 25 tools, listed in [TOOLS.md](TOOLS.md): read-only tools
 are annotated as such; the others go through the hub's policy. When a change needs
 approval, the relay asks the user through MCP elicitation if the client supports it,
 and otherwise returns the confirmation token to the AI. Previews and contact sheets
@@ -39,7 +39,13 @@ times closer than a few seconds. Straightening (`straighten_photos`, in
 transform and fits a camera rotation to them; it writes the result as Lightroom Guided
 Upright guides (`UprightFourSegments_N`) plus the transform Lightroom would have computed
 from them (`UprightTransform_5`, a 3x3 matrix on 0..1 image coordinates), because
-Lightroom only computes that transform for guides drawn by hand.
+Lightroom only computes that transform for guides drawn by hand. With two vertical and
+two horizontal guides the matrix is made exact: the projective part is fixed by the two
+vanishing points, the scale and shift along each axis are fitted to the rotation. The
+relay keeps each analysed preview and its lines in
+`~/Library/Application Support/Safelight/straighten/` (`straighten_store.py`), so that
+`straighten_lines` can show them numbered and `straighten_photos` can apply the lines
+the AI chose (`chosen_lines`) without rendering the photo again.
 
 ### Hub (`safelight hub`)
 
