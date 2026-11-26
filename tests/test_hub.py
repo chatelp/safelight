@@ -202,14 +202,47 @@ async def test_activity_log_and_clients():
 def test_settings_validation_and_persistence(tmp_path):
     path = tmp_path / "settings.json"
     hub = Hub(settings_path=path)
-    assert hub.update_settings({"confirm_threshold": 20, "read_only": True}) == {
+    lens = [{"lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"}]
+    changes = {
         "confirm_threshold": 20,
         "read_only": True,
+        "change_label": "none",
+        "snapshots": False,
+        "lens_names": lens,
     }
-    assert Settings.load(path).confirm_threshold == 20
-    for bad in ({"confirm_threshold": -1}, {"read_only": "yes"}, {"unknown": 1}):
+    assert hub.update_settings(changes) == changes
+    loaded = Settings.load(path)
+    assert loaded.confirm_threshold == 20 and loaded.lens_names == lens
+    assert loaded.real_lens("DT 17mm F4 SAM") == "Canon TS-E 17mm f/4L"
+    assert loaded.lightroom_lens("TS-E 17") == "DT 17mm F4 SAM"
+    assert loaded.lightroom_lens("FE 24-70mm F4 ZA OSS") == "FE 24-70mm F4 ZA OSS"
+    # A Lightroom name that is also part of another lens's real name is left alone.
+    tricky = Settings(lens_names=[{"lightroom": "X", "real": "Canon TS-E 17mm"}, *lens])
+    assert tricky.lightroom_lens("TS-E 17") == "TS-E 17"  # matches two real names: unchanged
+    clash = Settings(lens_names=[{"lightroom": "17mm", "real": "Some 17mm lens"}])
+    assert clash.lightroom_lens("17mm") == "17mm"
+    for bad in (
+        {"confirm_threshold": -1},
+        {"read_only": "yes"},
+        {"unknown": 1},
+        {"change_label": "orange"},
+        {"snapshots": 1},
+        {"lens_names": [{"lightroom": "A"}]},
+        {"lens_names": [{"lightroom": "A", "real": "B"}, {"lightroom": "A", "real": "C"}]},
+        {"lens_names": [{"lightroom": "", "real": "B"}]},
+        {"read_only": False, "change_label": "orange"},  # nothing changes
+    ):
         with pytest.raises(ValueError):
             hub.update_settings(bad)
+    assert hub.settings.read_only is True
+
+
+def test_settings_defaults_and_old_files(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_text(json.dumps({"confirm_threshold": 7, "change_label": "orange"}))
+    settings = Settings.load(path)  # an old or hand-edited file: bad values are skipped
+    assert settings.confirm_threshold == 7
+    assert settings.change_label == "purple" and settings.snapshots is True
 
 
 # -- over HTTP, with the fake plugin ----------------------------------------------------------

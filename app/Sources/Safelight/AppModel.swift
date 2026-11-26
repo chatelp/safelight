@@ -159,28 +159,61 @@ final class AppModel {
 
     // MARK: Settings
 
-    func setReadOnly(_ value: Bool) {
-        guard var settings = status?.settings else { return }
-        settings.readOnly = value
-        save(settings)
+    /// The settings as the user last set them: the hub's, plus changes still being sent,
+    /// so that a quick second change starts from the first one.
+    var settings: HubSettings? {
+        guard let hub = status?.settings else { return nil }
+        return pendingChanges.reduce(hub) { $1.applied(to: $0) }
     }
 
-    func setThreshold(_ value: Int) {
-        guard var settings = status?.settings else { return }
-        settings.confirmThreshold = max(0, value)
-        save(settings)
+    private var pendingChanges: [HubSettings.Change] = []
+
+    func setReadOnly(_ value: Bool) { save(.init(readOnly: value)) }
+
+    func setThreshold(_ value: Int) { save(.init(confirmThreshold: max(0, value))) }
+
+    func setChangeLabel(_ value: String) {
+        guard HubSettings.labels.contains(value) else { return }
+        save(.init(changeLabel: value))
     }
 
-    private func save(_ settings: HubSettings) {
-        Task {
+    func setSnapshots(_ value: Bool) { save(.init(snapshots: value)) }
+
+    func addLensName(lightroom: String, real: String) {
+        guard var names = settings?.lensNames else { return }
+        let lens = HubSettings.LensName(
+            lightroom: lightroom.trimmingCharacters(in: .whitespaces),
+            real: real.trimmingCharacters(in: .whitespaces)
+        )
+        names.removeAll { $0.lightroom == lens.lightroom }
+        names.append(lens)
+        save(.init(lensNames: names))
+    }
+
+    func removeLensName(_ lens: HubSettings.LensName) {
+        guard var names = settings?.lensNames else { return }
+        names.removeAll { $0 == lens }
+        save(.init(lensNames: names))
+    }
+
+    /// Changes are sent one after the other, in the order the user made them.
+    private func save(_ change: HubSettings.Change) {
+        guard status?.settings != nil else { return }
+        pendingChanges.append(change)
+        let previous = saving
+        saving = Task {
+            await previous?.value
             do {
-                try await api.update(settings: settings)
-                await refresh()
+                _ = try await api.update(change)
             } catch {
                 show(error.localizedDescription)
             }
+            await refresh()
+            pendingChanges.removeFirst()
         }
     }
+
+    private var saving: Task<Void, Never>?
 
     // MARK: Actions
 

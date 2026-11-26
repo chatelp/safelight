@@ -100,8 +100,9 @@ public struct HubAPI: Sendable {
     }
 
     @discardableResult
-    public func update(settings: HubSettings) async throws -> HubSettings {
-        let body = try Self.encoder.encode(settings)
+    /// Sends only the settings that change (an older hub refuses settings it does not know).
+    public func update(_ change: HubSettings.Change) async throws -> HubSettings {
+        let body = try Self.encoder.encode(change)
         return try Self.decoder.decode(HubSettings.self, from: try await request("PUT", "/v1/settings", body: body))
     }
 }

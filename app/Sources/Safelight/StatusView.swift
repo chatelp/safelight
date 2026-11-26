@@ -6,6 +6,7 @@ import SwiftUI
 /// system colors, amber only for live state).
 struct StatusView: View {
     @Bindable var model: AppModel
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -131,7 +132,7 @@ struct StatusView: View {
             Label("Settings", systemImage: "gearshape")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
-            if let settings = model.status?.settings {
+            if let settings = model.settings {
                 Toggle(isOn: Binding(get: { settings.readOnly }, set: { model.setReadOnly($0) })) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Read-only mode")
@@ -192,6 +193,10 @@ struct StatusView: View {
             }
             .menuStyle(.borderlessButton)
             .padding(.vertical, 4)
+            MenuButton("Preferences…", systemImage: "slider.horizontal.3") {
+                openWindow(id: "preferences")
+                NSApp.activate()
+            }
             MenuButton("Show Hub Log", systemImage: "doc.text") { model.showHubLog() }
             MenuButton("Quit Safelight", systemImage: "power") { NSApp.terminate(nil) }
         }
