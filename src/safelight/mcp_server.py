@@ -271,6 +271,9 @@ class Runner:
             status = await self.client.status(start=False)
             if not (status.get("app") or {}).get("connected"):
                 return None
+        except HubUnavailable:
+            return None
+        try:
             deadline = time.monotonic() + APP_APPROVAL_WAIT_S
             while (left := deadline - time.monotonic()) > 0:
                 if ctx is not None:
@@ -286,10 +289,21 @@ class Runner:
                     return state
                 if state != "pending":
                     return None
-            await self.client.decide(approval_id, "withdrawn")
         except HubUnavailable:
-            pass
-        return None
+            return None
+        except BaseException:
+            # The AI client cancelled: take the request out of the app, then stop.
+            with anyio.CancelScope(shield=True), contextlib.suppress(HubUnavailable):
+                await self.client.decide(approval_id, "withdrawn")
+            raise
+        # No answer in time: take the request out of the app; the AI client asks instead.
+        # An answer given at the very last moment still counts.
+        try:
+            last = await self.client.decide(approval_id, "withdrawn")
+        except HubUnavailable:
+            return None
+        state = last.get("state")
+        return state if state in ("approved", "declined") else None
 
     async def _ask_user(
         self, ctx: Context | None, command: str, params: dict[str, Any], reply: dict, name: str

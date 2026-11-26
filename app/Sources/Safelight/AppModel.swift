@@ -105,7 +105,10 @@ final class AppModel {
     func answer(_ id: String, approve: Bool) {
         Task {
             do {
-                try await api.decide(approval: id, approve: approve)
+                let kept = try await api.decide(approval: id, approve: approve)
+                if kept != (approve ? "approved" : "declined") {
+                    show("Too late: the AI client is asking you instead.")
+                }
             } catch {
                 show("Safelight could not send your answer: \(error.localizedDescription)")
             }

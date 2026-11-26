@@ -117,6 +117,10 @@ class Job:
         return out
 
 
+# An approval stays in the app this long after the relay's last wait for it.
+APPROVAL_SHOWN_S = 15.0
+
+
 @dataclass
 class PendingConfirmation:
     command: str
@@ -130,6 +134,15 @@ class PendingConfirmation:
     affected: int | None = None
     decision: str | None = None  # approved, declined, or withdrawn (asked in the client)
     decided: asyncio.Event = field(default_factory=asyncio.Event)
+    # A relay waits for the app's answer (long polls of wait_approval). Only those are
+    # shown in the app: an answer nobody waits for would do nothing.
+    waiting: int = 0
+    waited_at: float | None = None
+
+    def awaited(self, now: float) -> bool:
+        return self.waiting > 0 or (
+            self.waited_at is not None and now - self.waited_at <= APPROVAL_SHOWN_S
+        )
 
 
 @dataclass
@@ -246,7 +259,7 @@ class Hub:
                     "expires_in_s": round(p.expires_at - now),
                 }
                 for p in self._confirmations.values()
-                if p.decision is None and p.expires_at > now
+                if p.decision is None and p.expires_at > now and p.awaited(now)
             ],
         }
 
@@ -293,8 +306,13 @@ class Hub:
         if pending is None:
             # Declined ones are gone: the relay asked for it, so it was there.
             return {"state": "unknown"}
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(pending.decided.wait(), max(0.0, min(wait_s, MAX_WAIT_S)))
+        pending.waiting += 1
+        try:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(pending.decided.wait(), max(0.0, min(wait_s, MAX_WAIT_S)))
+        finally:
+            pending.waiting -= 1
+            pending.waited_at = time.monotonic()
         return {"state": pending.decision or "pending"}
 
     # -- settings -------------------------------------------------------------------------

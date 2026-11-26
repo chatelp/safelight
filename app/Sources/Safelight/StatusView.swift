@@ -71,7 +71,6 @@ struct StatusView: View {
                         Button("Decline") { model.answer(approval.id, approve: false) }
                         Button("Approve") { model.answer(approval.id, approve: true) }
                             .buttonStyle(.borderedProminent)
-                            .keyboardShortcut(.defaultAction)
                     }
                     .controlSize(.small)
                 }

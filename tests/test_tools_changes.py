@@ -351,6 +351,23 @@ async def test_a_change_declined_in_the_app_does_not_run(safelight_home):
         assert catalog.photos[ONE]["rating"] == before
 
 
+async def test_an_answer_at_the_last_moment_still_counts(safelight_home, monkeypatch):
+    """The user approves between the relay's last wait and its withdrawal."""
+    original = HubClient.decide
+
+    async def late(self, approval_id, decision):
+        if decision == "withdrawn":
+            await original(self, approval_id, "approved")
+        return await original(self, approval_id, decision)
+
+    monkeypatch.setattr(mcp_server, "APP_APPROVAL_WAIT_S", 0.3)
+    monkeypatch.setattr(HubClient, "decide", late)
+    async with session(safelight_home, threshold=1) as (catalog, call, _mcp):
+        async with app_answering(safelight_home, "pending"):
+            result = await call("set_metadata", photo_ids=[ONE, TWO], rating=5)
+        assert result["state"] == "succeeded" and catalog.photos[ONE]["rating"] == 5
+
+
 async def test_without_an_answer_in_the_app_the_ai_client_asks(safelight_home, monkeypatch):
     monkeypatch.setattr(mcp_server, "APP_APPROVAL_WAIT_S", 0.5)
     async with session(safelight_home, threshold=1) as (_catalog, call, _mcp):

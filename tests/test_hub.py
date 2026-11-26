@@ -474,12 +474,13 @@ async def test_the_app_approves_or_declines_a_confirmation():
     asked = await hub.run("remove", {"count": 3}, client="claude-ai")
     confirmation = asked["confirmation"]
     approval_id = confirmation["approval_id"]
-    (shown,) = hub.status()["approvals"]
-    assert shown["id"] == approval_id and shown["client"] == "claude-ai"
-    assert "token" not in shown  # the app answers by id; only the relay holds the token
+    assert hub.status()["approvals"] == []  # nobody waits for the app's answer yet
 
     waiting = asyncio.create_task(hub.wait_approval(approval_id, 5))
     await asyncio.sleep(0.05)
+    (shown,) = hub.status()["approvals"]
+    assert shown["id"] == approval_id and shown["client"] == "claude-ai"
+    assert "token" not in shown  # the app answers by id; only the relay holds the token
     assert hub.decide(approval_id, "approved") == {"state": "approved"}
     assert (await asyncio.wait_for(waiting, 1)) == {"state": "approved"}
     assert hub.status()["approvals"] == []
