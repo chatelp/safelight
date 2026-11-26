@@ -1484,7 +1484,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         confirmation_token: ConfirmationToken = None,
     ) -> ActionResult:
         """Export photos with their edits to files. Returns the path of each file. Existing
-        files are kept unless if_exists is overwrite."""
+        files are kept unless if_exists is overwrite, which always needs the user's
+        approval (files replaced on disk cannot be got back)."""
         params: dict[str, Any] = {
             **_targets(photo_ids, scope),
             "destination": destination,

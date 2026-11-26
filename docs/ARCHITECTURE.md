@@ -93,7 +93,8 @@ progress (`done`, `total`, `message`).
 
 `src/safelight/policy.py` describes each command: read-only, mutating,
 destructive, and whether the plugin can simulate it (`dry_run`). Unknown
-commands count as mutating.
+commands count as mutating. An export with `if_exists: overwrite` counts as
+destructive: files replaced on disk cannot be got back.
 
 1. **Read-only mode** (a setting) refuses every mutating command.
 2. A mutating command that supports a dry run is first simulated: the plugin

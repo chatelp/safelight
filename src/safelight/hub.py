@@ -257,7 +257,7 @@ class Hub:
             self._log_refusal(client, command, refusal)
             return refusal
 
-        policy = policy_for(command, self.policies)
+        policy = policy_for(command, self.policies, params)
         if confirm is not None:
             if not self._consume_confirmation(confirm, command, params):
                 response = _failed(
@@ -308,7 +308,7 @@ class Hub:
 
         threshold = self.settings.confirm_threshold
         if policy.destructive:
-            reason = "This change cannot be undone easily."
+            reason = policy.reason or "This change cannot be undone easily."
         elif affected is not None and affected > threshold:
             reason = f"This change affects {affected} photos, more than the limit of {threshold}."
         else:
