@@ -49,6 +49,9 @@ It draws the popover with sample data in light and dark appearance. Native contr
 - **Popover**: Lightroom version and catalog, AI clients seen in the last 15 minutes,
   the last activity in plain words, read-only mode, confirmation threshold, launch at
   login, restart hub, preferences, hub log.
+- **Approvals**: changes waiting for the user's approval show at the top of the popover
+  and as a notification with Approve / Decline. The AI client's relay waits up to
+  2 minutes for the answer, then asks in the AI client instead.
 - **Preferences window**: color label for photos Safelight changes, snapshot before a
   geometry change, real names of lenses Lightroom names wrongly. Check its layout with
   `Safelight --render-preferences /tmp/prefs.png`.

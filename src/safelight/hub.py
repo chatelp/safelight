@@ -40,6 +40,8 @@ from .paths import hub_config_path
 from .policy import CommandPolicy, policy_for
 from .protocol import (
     ACTIVITY_LOG_SIZE,
+    APP_CLIENT,
+    APP_SEEN_S,
     CLIENT_HEADER,
     CLIENT_SEEN_WINDOW_S,
     CONFIRMATION_TTL_S,
@@ -120,6 +122,14 @@ class PendingConfirmation:
     command: str
     digest: str
     expires_at: float
+    # Shown in the app, which can approve or decline it (see `decide`).
+    approval_id: str = ""
+    client: str = ""
+    summary: str | None = None
+    reason: str = ""
+    affected: int | None = None
+    decision: str | None = None  # approved, declined, or withdrawn (asked in the client)
+    decided: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 @dataclass
@@ -179,6 +189,7 @@ class Hub:
         self._clients: dict[str, float] = {}
         self._active_polls = 0
         self._last_poll_end: float | None = None
+        self._app_seen: float | None = None
 
     # -- presence and status ------------------------------------------------------------
 
@@ -223,7 +234,68 @@ class Hub:
                 if now - seen <= CLIENT_SEEN_WINDOW_S
             ],
             "settings": self.settings.as_dict(),
+            "app": {"connected": self.app_connected},
+            "approvals": [
+                {
+                    "id": p.approval_id,
+                    "command": p.command,
+                    "client": p.client,
+                    "summary": p.summary,
+                    "reason": p.reason,
+                    "affected": p.affected,
+                    "expires_in_s": round(p.expires_at - now),
+                }
+                for p in self._confirmations.values()
+                if p.decision is None and p.expires_at > now
+            ],
         }
+
+    @property
+    def app_connected(self) -> bool:
+        return self._app_seen is not None and time.monotonic() - self._app_seen <= APP_SEEN_S
+
+    def app_seen(self) -> None:
+        self._app_seen = time.monotonic()
+
+    # -- approvals in the app ---------------------------------------------------------------
+
+    def _approval(self, approval_id: str) -> PendingConfirmation | None:
+        for pending in self._confirmations.values():
+            if pending.approval_id == approval_id and pending.expires_at > time.monotonic():
+                return pending
+        return None
+
+    def decide(self, approval_id: str, decision: str) -> dict[str, Any]:
+        """The app's answer: approved or declined; withdrawn when the relay stopped waiting
+        and asks in the AI client instead. A declined confirmation can no longer be used."""
+        pending = self._approval(approval_id)
+        if pending is None or decision not in ("approved", "declined", "withdrawn"):
+            return {"state": "unknown"}
+        if pending.decision is None:
+            pending.decision = decision
+            pending.decided.set()
+            if decision != "withdrawn":
+                self.activity.add(
+                    kind="approval",
+                    client=pending.client,
+                    command=pending.command,
+                    affected=pending.affected,
+                    state=decision,
+                )
+            if decision == "declined":
+                for token, value in list(self._confirmations.items()):
+                    if value is pending:
+                        del self._confirmations[token]
+        return {"state": pending.decision}
+
+    async def wait_approval(self, approval_id: str, wait_s: float) -> dict[str, Any]:
+        pending = self._approval(approval_id)
+        if pending is None:
+            # Declined ones are gone: the relay asked for it, so it was there.
+            return {"state": "unknown"}
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(pending.decided.wait(), max(0.0, min(wait_s, MAX_WAIT_S)))
+        return {"state": pending.decision or "pending"}
 
     # -- settings -------------------------------------------------------------------------
 
@@ -315,10 +387,16 @@ class Hub:
             return None
 
         token = secrets.token_urlsafe(12)
+        approval_id = secrets.token_urlsafe(8)
         self._confirmations[token] = PendingConfirmation(
             command=command,
             digest=_params_digest(command, params),
             expires_at=time.monotonic() + CONFIRMATION_TTL_S,
+            approval_id=approval_id,
+            client=client,
+            summary=summary,
+            reason=reason,
+            affected=affected,
         )
         self.activity.add(
             kind="confirmation_required",
@@ -337,6 +415,7 @@ class Hub:
                 "summary": summary,
                 "reason": reason,
                 "expires_in_s": int(CONFIRMATION_TTL_S),
+                "approval_id": approval_id,
                 "instructions": "Show this to the user and ask for approval. Only if they "
                 "approve, run the same command with the same parameters and this token.",
             },
@@ -518,6 +597,9 @@ class Hub:
                         "not have completed.",
                     ),
                 )
+        for token, pending in list(self._confirmations.items()):
+            if pending.expires_at < now:
+                del self._confirmations[token]
         while len(self._jobs) > MAX_RETAINED_JOBS:
             oldest = next(iter(self._jobs.values()))
             if not oldest.finished:
@@ -607,8 +689,18 @@ def build_app(
     def client_of(request: Request) -> str:
         return (request.headers.get(CLIENT_HEADER) or "unknown")[:80]
 
-    async def status(_: Request) -> Response:
+    async def status(request: Request) -> Response:
+        if client_of(request) == APP_CLIENT:
+            hub.app_seen()
         return JSONResponse(hub.status())
+
+    async def approval(request: Request) -> Response:
+        approval_id = request.path_params["approval_id"]
+        if request.method == "POST":
+            body = await read_json(request)
+            return JSONResponse(hub.decide(approval_id, str(body.get("decision"))))
+        wait = _to_float(request.query_params.get("wait_s")) or 0.0
+        return JSONResponse(await hub.wait_approval(approval_id, wait))
 
     async def rpc(request: Request) -> Response:
         body = await read_json(request)
@@ -681,6 +773,7 @@ def build_app(
             Route("/v1/jobs/{job_id}/cancel", guard(cancel_job), methods=["POST"]),
             Route("/v1/activity", guard(activity), methods=["GET"]),
             Route("/v1/settings", guard(settings), methods=["GET", "PUT"]),
+            Route("/v1/approvals/{approval_id}", guard(approval), methods=["GET", "POST"]),
             Route("/v1/plugin/poll", guard(plugin_poll), methods=["POST"]),
             Route("/v1/plugin/progress", guard(plugin_progress), methods=["POST"]),
             Route("/v1/plugin/result", guard(plugin_result), methods=["POST"]),

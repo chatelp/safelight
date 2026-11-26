@@ -70,6 +70,10 @@ public enum ActivityText {
             return "Asked for approval: \(action(event.command)) (\(count))"
         case "settings":
             return "Settings changed"
+        case "approval":
+            let count = event.affected.map { " (\($0) photos)" } ?? ""
+            let verb = event.state == "approved" ? "Approved" : "Declined"
+            return "\(verb) in Safelight: \(action(event.command))\(count)"
         default:
             let base = action(event.command)
             switch event.state {

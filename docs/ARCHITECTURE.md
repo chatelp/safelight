@@ -103,22 +103,31 @@ destructive: files replaced on disk cannot be got back.
    default), or if the command is destructive, nothing runs. The hub answers
    `confirmation_required` with a summary and a single-use token, valid 10
    minutes and bound to the exact command and parameters.
-4. The AI client shows the summary to the user and, only after the user
-   approves, sends the same command again with the token.
+4. If the menu bar app is open, the request appears there (popover and a
+   notification with Approve / Decline) and the relay waits up to 2 minutes for
+   the user's answer, keeping the AI client's request alive with progress
+   notifications. Approved, the relay runs the command with the token; declined,
+   the token is cancelled and nothing runs.
+5. Otherwise (app closed, or no answer in time: the request is then withdrawn from
+   the app), the AI client asks: through MCP elicitation when it supports it, or
+   by showing the summary and sending the same command again with the token only
+   after the user approves.
 
-The AI cannot change settings: they are only reachable through the local API
-(the CLI today, the menu bar app later).
+The AI cannot change settings or answer approvals: they are only reachable through
+the local API, used by the app and the CLI. The relay never sees an approval except
+through the hub, and the app answers by approval id, never with the token.
 
 #### HTTP API
 
 | Endpoint | Used by | Purpose |
 |---|---|---|
-| `GET /v1/status` | relays, app | hub, plugin, jobs, clients, settings |
+| `GET /v1/status` | relays, app | hub, plugin, jobs, clients, settings, whether the app is open, changes waiting for approval |
 | `POST /v1/rpc` | relays, CLI | run a command (`command`, `params`, `wait_s`, `confirm`) |
 | `GET /v1/jobs`, `GET /v1/jobs/{id}?wait_s=` | relays, app | recent jobs, one job |
 | `POST /v1/jobs/{id}/cancel` | relays, app | cancel a job |
 | `GET /v1/activity?after=` | app | activity events after a sequence number |
 | `GET`/`PUT /v1/settings` | app, CLI, relays | the user's settings (see Hub) |
+| `GET /v1/approvals/{id}?wait_s=`, `POST /v1/approvals/{id}` | relays, app | wait for the user's answer; answer (`approved`, `declined`, or `withdrawn` by the relay) |
 | `POST /v1/plugin/poll` | plugin | long-poll for jobs |
 | `POST /v1/plugin/progress` | plugin | report progress, learn about cancellation |
 | `POST /v1/plugin/result` | plugin | deliver a job's result |
@@ -175,7 +184,9 @@ progress. It talks to the hub's status API:
 - install or update the Lightroom plugin, register Safelight with Claude Desktop,
   Claude Code, Cursor and Codex;
 - settings: confirmation threshold, read-only mode, launch at login; a Preferences
-  window for the color of changed photos, snapshots and lens names.
+  window for the color of changed photos, snapshots and lens names;
+- changes waiting for the user's approval, at the top of the popover and as
+  notifications with Approve / Decline (Approve asks to unlock the Mac).
 
 The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
 with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds

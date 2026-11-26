@@ -463,3 +463,50 @@ def test_hub_stops_when_its_app_is_gone(safelight_home):
         if process.poll() is None:
             process.kill()
     assert not (safelight_home / "hub.json").exists()
+
+
+# -- approvals in the app -----------------------------------------------------------------
+
+
+async def test_the_app_approves_or_declines_a_confirmation():
+    hub = Hub(settings=Settings(), policies=POLICIES)
+    await _connected(hub)
+    asked = await hub.run("remove", {"count": 3}, client="claude-ai")
+    confirmation = asked["confirmation"]
+    approval_id = confirmation["approval_id"]
+    (shown,) = hub.status()["approvals"]
+    assert shown["id"] == approval_id and shown["client"] == "claude-ai"
+    assert "token" not in shown  # the app answers by id; only the relay holds the token
+
+    waiting = asyncio.create_task(hub.wait_approval(approval_id, 5))
+    await asyncio.sleep(0.05)
+    assert hub.decide(approval_id, "approved") == {"state": "approved"}
+    assert (await asyncio.wait_for(waiting, 1)) == {"state": "approved"}
+    assert hub.status()["approvals"] == []
+    assert hub.activity.since(0)["events"][-1]["state"] == "approved"
+
+    # Declined: the token is no longer accepted.
+    asked = await hub.run("remove", {"count": 3}, client="claude-ai")
+    hub.decide(asked["confirmation"]["approval_id"], "declined")
+    refused = await hub.run("remove", {"count": 3}, confirm=asked["confirmation"]["token"])
+    assert refused["error"]["code"] == ErrorCode.INVALID_CONFIRMATION
+
+    # Withdrawn (asked in the AI client instead): hidden from the app, token still good.
+    asked = await hub.run("remove", {"count": 3}, client="claude-ai")
+    assert hub.decide(asked["confirmation"]["approval_id"], "withdrawn") == {"state": "withdrawn"}
+    assert hub.status()["approvals"] == []
+    hub.decide(asked["confirmation"]["approval_id"], "approved")  # too late: stays withdrawn
+    assert await hub.wait_approval(asked["confirmation"]["approval_id"], 0) == {
+        "state": "withdrawn"
+    }
+    assert hub.decide("nope", "approved") == {"state": "unknown"}
+
+
+async def test_the_app_is_seen_through_its_status_polls(safelight_home):
+    from safelight.protocol import APP_CLIENT
+
+    async with running_hub(safelight_home) as (_, client):
+        assert (await client.status(start=False))["app"]["connected"] is False
+        app = HubClient(safelight_home, client_name=APP_CLIENT)
+        await app.status(start=False)
+        assert (await client.status(start=False))["app"]["connected"] is True

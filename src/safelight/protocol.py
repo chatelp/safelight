@@ -11,6 +11,9 @@ PROTOCOL_VERSION = 1
 DEFAULT_PORT = 58763
 TOKEN_HEADER = "X-Safelight-Token"
 CLIENT_HEADER = "X-Safelight-Client"
+# The menu bar app's client name: when it is open, it shows approvals to the user.
+APP_CLIENT = "Safelight menu bar"
+APP_SEEN_S = 5.0  # the app polls every 1.5 s; older than this, it is closed
 
 # The hub holds a plugin poll open for at most this long before answering "no command".
 MAX_POLL_WAIT_S = 25.0

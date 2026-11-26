@@ -77,7 +77,11 @@ enum PreviewRenderer {
          "jobs": {"queued": 0, "running": 1},
          "clients": [{"name": "claude-ai", "last_seen_s_ago": 12}, {"name": "claude-code", "last_seen_s_ago": 300}],
          "settings": {"confirm_threshold": 50, "read_only": false, "change_label": "purple", "snapshots": false,
-                      "lens_names": [{"lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"}]}}
+                      "lens_names": [{"lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"}]},
+         "approvals": [{"id": "a1", "command": "develop.apply", "client": "claude-ai",
+                        "summary": "Change develop settings on 312 photos",
+                        "reason": "This change affects 312 photos, more than the limit of 50.",
+                        "affected": 312, "expires_in_s": 590}]}
         """
 
     static let sampleActivity = """
