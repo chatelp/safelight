@@ -21,7 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from . import __version__, straighten_store
+from . import __version__, knowledge, straighten_store
 from .analysis import findings, groups, measure, summarize, top_of_stacks
 from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
@@ -67,6 +67,12 @@ only if they approve, call the same tool again with the same arguments plus
 
 Long operations may return state "running" with a job_id: follow them with safelight_job
 and stop them with safelight_cancel_job.
+
+The user's stable choices live in Safelight's settings and are applied by Safelight
+itself: the color label for photos it changes, snapshots, real lens names. Before
+straightening an exhibition or sorting duplicates, read the method with safelight_guide
+(also offered as prompts); background guides cover Lightroom's Guided Upright and shift
+lenses.
 
 Safelight is not affiliated with Adobe.
 """
@@ -543,6 +549,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         instructions=INSTRUCTIONS,
     )
 
+    knowledge.register(server)
+
     # -- status and jobs ------------------------------------------------------------------
 
     @server.tool(annotations=READ_ONLY)
@@ -553,6 +561,23 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         unavailable.
         """
         return await collect_status(hub_client, _client_name(ctx))
+
+    @server.tool(annotations=READ_ONLY, structured_output=False)
+    async def safelight_guide(
+        topic: Annotated[
+            Literal[
+                "straighten-exhibition-folder", "sort-duplicates", "guided-upright", "shift-lenses"
+            ],
+            Field(
+                description="A recipe (straighten-exhibition-folder, sort-duplicates) or a guide"
+            ),
+        ],
+        folder: Annotated[str | None, Field(description="For a recipe: the folder")] = None,
+    ) -> str:
+        """Safelight's method for a common job (recipe), or background on a topic (guide).
+        Read the recipe before straightening an exhibition folder or sorting duplicates,
+        and follow it."""
+        return knowledge.ENTRIES[topic].text(folder)
 
     @server.tool(annotations=READ_ONLY)
     async def safelight_job(
@@ -701,7 +726,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         heuristics: before rejecting or deleting anything, look at the doubtful photos
         with contact_sheet and ask the user. Nothing is changed in the catalog. To act,
         use set_metadata (flags, ratings, labels) with the photo ids returned here.
-        Closed eyes are not detected; check faces on a contact sheet.
+        Closed eyes are not detected; check faces on a contact sheet. Sharpness alone does
+        not choose the best frame: look for lens flare, passers-by and reflections too
+        (method: safelight_guide "sort-duplicates").
         """
         photos, total = await list_photos(
             runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
