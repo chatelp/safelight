@@ -26,7 +26,7 @@ running, the relay opens the menu bar app in the background, which starts it (ab
 a second). If the app is not installed, or brings no hub up within 6 seconds, the
 relay starts the hub on its own (in about half a second). It
 passes the AI client's own name (for example "Claude Desktop") to the hub for the
-activity log. It exposes 25 tools, listed in [TOOLS.md](TOOLS.md): read-only tools
+activity log. It exposes 26 tools, listed in [TOOLS.md](TOOLS.md), plus recipes (MCP prompts) and background guides (MCP resources): read-only tools
 are annotated as such; the others go through the hub's policy. When a change needs
 approval, the relay asks the user through MCP elicitation if the client supports it,
 and otherwise returns the confirmation token to the AI. Previews and contact sheets
@@ -192,6 +192,33 @@ The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes se
 with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds
 (roadmap lot L7) it will embed the Python hub, so users install a single signed `.dmg`.
 Planned (lot L9): the user's preferences, photos waiting for review, and approvals.
+
+## Where knowledge lives
+
+What Safelight learns while working on real photos must live in Safelight, so that any
+AI client benefits, not in the memory of one conversation. For each new piece of
+knowledge, the first question that gets a yes decides where it goes:
+
+1. **Must it never be forgotten?** (never change a photo the user validated, never
+   overwrite the user's corrections) → **code**: the plugin, the hub's policy or the
+   tool itself enforces it, whatever the AI asks.
+2. **Is it a fact about one photo?** (validated, who corrected the geometry, why it was
+   rejected) → **the catalog**: Safelight's fields on the photo.
+3. **Is it the user's stable choice?** (color for changed photos, snapshots, real lens
+   names, approval threshold) → **Safelight's settings**, edited in the app.
+4. **Is it a sequence of steps for a job?** (straighten an exhibition folder, sort
+   duplicates) → **a recipe** (`src/safelight/data/recipes`, served as an MCP prompt
+   and by `safelight_guide`).
+5. **Is it how to use one tool?** → **the tool's description** and the notes in its
+   results.
+6. **Is it general background?** (Guided Upright, shift lenses) → **a guide**
+   (`src/safelight/data/guides`, served as an MCP resource and by `safelight_guide`).
+7. **Is it how this user talks to their AI?** → **the AI client's own memory**.
+8. **Can it only be judged by eye?** (which lines are the right guides) → the AI looks,
+   the user decides; Safelight shows what it found (`straighten_lines`).
+
+Knowledge about *building* Safelight goes in the repository ([CLAUDE.md](../CLAUDE.md),
+this document), not in the product.
 
 ## Versioning
 
