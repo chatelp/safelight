@@ -7,7 +7,10 @@ Lightroom folder "{folder}".
 3. For each group, look at it with contact_sheet, then at the candidates with
    preview_photo at a size where details show. Sharpness alone does not choose the best
    frame: look for lens flare, passers-by or people walking into the frame, closed eyes
-   and expressions, reflections, a tilted horizon and the framing.
+   and expressions, reflections, a tilted horizon and the framing. In groups marked
+   choose_by_eye the frames are about as sharp as each other: the moment decides (a
+   face turned to the camera, a gesture, the light on the scene, a figure that tells the
+   story).
 4. Propose which frame to keep in each group, and why. The user decides: reject nothing
    before they answer.
 5. For the frames the user rejects, use set_metadata with pick "rejected", and say why in

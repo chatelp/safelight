@@ -88,6 +88,26 @@ def test_bursts_need_close_times_and_similar_frames():
     assert group["best_photo_id"] == "b"
 
 
+def test_equally_sharp_frames_are_left_to_the_eye():
+    photos = [
+        {"uuid": "a", "captured_at": "2026-11-20T10:00:00"},
+        {"uuid": "b", "captured_at": "2026-11-20T10:00:01"},
+        {"uuid": "c", "captured_at": "2026-11-20T10:00:30"},
+        {"uuid": "d", "captured_at": "2026-11-20T10:00:31"},
+    ]
+    stats = {
+        "a": _stats(82, 0),
+        "b": _stats(100, 0),  # sharper, but not decisively
+        "c": _stats(40, (1 << 64) - 1),
+        "d": _stats(100, (1 << 64) - 1),  # clearly sharper
+    }
+    found = {frozenset(g["photo_ids"]): g for g in groups(photos, stats)}
+    close = found[frozenset({"a", "b"})]
+    assert close["choose_by_eye"] is True and "moment" in close["why_best"]
+    clear = found[frozenset({"c", "d"})]
+    assert "choose_by_eye" not in clear and clear["why_best"] == "sharpest frame of the group"
+
+
 def test_picked_frame_wins_a_close_call():
     photos = [
         {"uuid": "a", "captured_at": "2026-11-20T10:00:00", "pick": 1},
