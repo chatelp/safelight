@@ -1,4 +1,9 @@
-"""Client used by the MCP relay and the CLI to talk to the hub, starting it if needed."""
+"""Client used by the MCP relay and the CLI to talk to the hub, starting it if needed.
+
+When no hub runs, the client opens the Safelight app, which runs the hub (the app is the
+control post: settings, activity, approvals). If the app is not installed, or does not
+bring a hub up within `APP_WAIT_S`, the client starts the hub on its own.
+"""
 
 from __future__ import annotations
 
@@ -15,8 +20,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .paths import hub_config_path, hub_log_path, safelight_home
+from .paths import default_home, hub_config_path, hub_log_path, safelight_home
 from .protocol import CLIENT_HEADER, DEFAULT_WAIT_S, TOKEN_HEADER, ErrorCode, JobState
+
+APP_BUNDLE_ID = "io.github.chatelp.safelight"
+APP_WAIT_S = 6.0  # an app launched cold takes about 2 s to bring its hub up
+START_TIMEOUT_S = 12.0
 
 
 class HubUnavailable(RuntimeError):
@@ -105,12 +114,37 @@ class HubClient:
             return "busy", None
         return "ok", status
 
+    def _app_allowed(self) -> bool:
+        """Only for the user's real home: the app knows no other (tests use their own)."""
+        return (
+            sys.platform == "darwin"
+            and os.environ.get("SAFELIGHT_OPEN_APP", "1") != "0"
+            and self.home == default_home()
+        )
+
+    def _open_app(self) -> bool:
+        """Opens the Safelight app in the background. False if it is not installed."""
+        if not self._app_allowed():
+            return False
+        try:
+            done = subprocess.run(
+                ["/usr/bin/open", "-g", "-b", APP_BUNDLE_ID],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return done.returncode == 0
+
     def _spawn_hub(self) -> None:
         self.home.mkdir(parents=True, exist_ok=True)
         log = open(hub_log_path(self.home), "ab")  # noqa: SIM115 - handed to the child process
         env = dict(os.environ, SAFELIGHT_HOME=str(self.home))
         subprocess.Popen(
-            [sys.executable, "-m", "safelight.cli", "hub"],
+            [sys.executable, "-m", "safelight.cli", "hub", "--host", "relay"],
             stdin=subprocess.DEVNULL,
             stdout=log,
             stderr=log,
@@ -122,14 +156,23 @@ class HubClient:
 
     def _ensure_running_sync(self, start: bool, timeout: float) -> dict[str, Any]:
         deadline = time.monotonic() + timeout
-        spawned = False
+        app_tried = spawned = False
+        spawn_at: float | None = None  # when to stop waiting for the app
         while True:
             state, status = self._probe()
             if state == "ok" and status is not None:
                 return status
             if state == "down" and not start:
                 raise HubUnavailable("the Safelight hub is not running")
-            if state == "down" and not spawned:
+            if state == "down" and not app_tried:
+                app_tried = True
+                if self._open_app():
+                    spawn_at = time.monotonic() + APP_WAIT_S
+            if (
+                state == "down"
+                and not spawned
+                and (spawn_at is None or time.monotonic() >= spawn_at)
+            ):
                 self._spawn_hub()
                 spawned = True
             if time.monotonic() >= deadline:
@@ -156,7 +199,9 @@ class HubClient:
 
     # -- public async API ---------------------------------------------------------------
 
-    async def status(self, *, start: bool = True, timeout: float = 8.0) -> dict[str, Any]:
+    async def status(
+        self, *, start: bool = True, timeout: float = START_TIMEOUT_S
+    ) -> dict[str, Any]:
         """Hub status, starting the hub first if needed. Raises HubUnavailable."""
         return await asyncio.to_thread(self._ensure_running_sync, start, timeout)
 

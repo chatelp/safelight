@@ -22,7 +22,9 @@ This document describes the target design for Safelight 1.0. Parts marked
 
 The process an AI client launches over stdio. It exposes Safelight's tools,
 validates arguments, and forwards each call to the hub. If the hub is not
-running, the relay starts it in the background (in about half a second). It
+running, the relay opens the menu bar app in the background, which starts it (about
+a second). If the app is not installed, or brings no hub up within 6 seconds, the
+relay starts the hub on its own (in about half a second). It
 passes the AI client's own name (for example "Claude Desktop") to the hub for the
 activity log. It exposes 25 tools, listed in [TOOLS.md](TOOLS.md): read-only tools
 are annotated as such; the others go through the hub's policy. When a change needs
@@ -54,6 +56,9 @@ A small local daemon, one per user session:
 - listens on `127.0.0.1:58763` only (`SAFELIGHT_PORT` overrides it);
 - writes `~/Library/Application Support/Safelight/hub.json` (port and a random
   token, readable by the user only) and removes it when it stops;
+- normally runs as a child of the menu bar app (`--host app --parent-pid`), and
+  stops when the app quits or crashes; its status says who started it (`app`,
+  `relay` or `terminal`);
 - requires that token on every request, refuses requests carrying a browser
   `Origin` or an unexpected `Host`, so web pages cannot reach it;
 - turns every command into a **job** and hands it to the plugin;
@@ -153,11 +158,15 @@ mismatched plugin is reported clearly instead of failing on individual commands.
 
 ### Menu bar app (`app/`)
 
-A native SwiftUI `MenuBarExtra` app that talks to the hub's status API:
+A native SwiftUI `MenuBarExtra` app, the user's control post (roadmap decision d19).
+While it is open it runs the hub as its own child process, starts it again if it
+stops (giving up after three failed starts in a row, until the user restarts it), and
+replaces a hub that a relay started on its own as soon as that hub has no job in
+progress. It talks to the hub's status API:
 
 - status icon: hub running, Lightroom connected, or not;
 - connected AI clients and a live log of commands;
-- open Lightroom, start or stop the hub, open logs;
+- open Lightroom, restart the hub, open logs;
 - install or update the Lightroom plugin, register Safelight with Claude Desktop,
   Claude Code, Cursor and Codex;
 - settings: confirmation threshold, read-only mode, launch at login.
@@ -165,6 +174,7 @@ A native SwiftUI `MenuBarExtra` app that talks to the hub's status API:
 The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
 with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds
 (roadmap lot L7) it will embed the Python hub, so users install a single signed `.dmg`.
+Planned (lot L9): the user's preferences, photos waiting for review, and approvals.
 
 ## Versioning
 

@@ -8,12 +8,16 @@ from pathlib import Path
 from .protocol import DEFAULT_PORT
 
 
+def default_home() -> Path:
+    return Path.home() / "Library" / "Application Support" / "Safelight"
+
+
 def safelight_home() -> Path:
     """Directory for hub.json and logs. The Lightroom plugin reads hub.json from here."""
     override = os.environ.get("SAFELIGHT_HOME")
     if override:
         return Path(override).expanduser()
-    return Path.home() / "Library" / "Application Support" / "Safelight"
+    return default_home()
 
 
 def hub_config_path(home: Path | None = None) -> Path:

@@ -56,7 +56,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"safelight {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("mcp", help="run the MCP server over stdio (what AI clients launch)")
-    sub.add_parser("hub", help="run the hub in the foreground (normally started automatically)")
+    hub = sub.add_parser("hub", help="run the hub in the foreground (normally started for you)")
+    hub.add_argument(
+        "--host",
+        choices=["app", "relay", "terminal"],
+        default="terminal",
+        help="who starts it (shown in the status; the app replaces a hub started by a relay)",
+    )
+    hub.add_argument("--parent-pid", type=int, help="stop when this parent process goes away")
     sub.add_parser("status", help="show hub and Lightroom status, starting the hub if needed")
 
     call = sub.add_parser("call", help="send a raw command to Lightroom (development)")
@@ -94,7 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         from .hub import run_hub
         from .paths import configured_port, safelight_home
 
-        run_hub(safelight_home(), configured_port())
+        run_hub(safelight_home(), configured_port(), args.host, args.parent_pid)
         return 0
 
     if args.command == "fake-plugin":

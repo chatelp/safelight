@@ -7,6 +7,8 @@ public struct HubStatus: Decodable, Sendable, Equatable {
         public var pid: Int
         public var uptimeS: Double
         public var shuttingDown: Bool
+        /// Who started it: "app", "relay" or "terminal" (absent from hubs before 0.2).
+        public var host: String?
     }
 
     public struct Plugin: Decodable, Sendable, Equatable {

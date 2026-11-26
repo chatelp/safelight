@@ -334,3 +334,99 @@ async def test_hub_stops_quickly_while_the_plugin_holds_a_poll(safelight_home):
     plugin.stop()
     with contextlib.suppress(Exception):
         await asyncio.wait_for(plugin_task, 5)
+
+
+# -- who starts the hub: the app first, the relay alone as a fallback ---------------------
+
+
+class _FakeStart(HubClient):
+    """HubClient with a simulated hub and app; `events` records who was asked to start it."""
+
+    def __init__(self, home, app_installed, app_brings_hub_after=None):
+        super().__init__(home)
+        self.app_installed = app_installed
+        self.app_brings_hub_after = app_brings_hub_after
+        self.events = []
+        self.probes = 0
+        self.hub_up_at = None
+
+    def _probe(self):
+        self.probes += 1
+        if self.hub_up_at is not None and self.probes >= self.hub_up_at:
+            return "ok", {"hub": {"host": self.events[-1]}}
+        return "down", None
+
+    def _open_app(self):
+        self.events.append("app")
+        if self.app_installed and self.app_brings_hub_after is not None:
+            self.hub_up_at = self.probes + self.app_brings_hub_after
+        return self.app_installed
+
+    def _spawn_hub(self):
+        self.events.append("relay")
+        self.hub_up_at = self.probes + 2
+
+
+def test_relay_opens_the_app_and_waits_for_its_hub(tmp_path):
+    client = _FakeStart(tmp_path, app_installed=True, app_brings_hub_after=5)
+    status = client._ensure_running_sync(start=True, timeout=5)
+    assert client.events == ["app"]
+    assert status["hub"]["host"] == "app"
+
+
+def test_relay_starts_the_hub_alone_without_the_app(tmp_path):
+    client = _FakeStart(tmp_path, app_installed=False)
+    status = client._ensure_running_sync(start=True, timeout=5)
+    assert client.events == ["app", "relay"]
+    assert status["hub"]["host"] == "relay"
+
+
+def test_relay_starts_the_hub_alone_when_the_app_does_not(tmp_path, monkeypatch):
+    monkeypatch.setattr("safelight.hub_client.APP_WAIT_S", 0.3)
+    client = _FakeStart(tmp_path, app_installed=True)  # opens, but no hub comes
+    status = client._ensure_running_sync(start=True, timeout=5)
+    assert client.events == ["app", "relay"]
+    assert status["hub"]["host"] == "relay"
+
+
+def test_app_is_opened_only_for_the_real_home(tmp_path, monkeypatch):
+    monkeypatch.setattr("safelight.hub_client.sys.platform", "darwin")
+    monkeypatch.setattr("safelight.hub_client.default_home", lambda: tmp_path)
+    assert HubClient(tmp_path)._app_allowed()
+    assert not HubClient(tmp_path / "other")._app_allowed()
+    monkeypatch.setenv("SAFELIGHT_OPEN_APP", "0")
+    assert not HubClient(tmp_path)._app_allowed()
+
+
+async def test_status_says_who_started_the_hub(safelight_home):
+    server = HubServer(safelight_home, port=0, host="app")
+    task = asyncio.create_task(server.serve())
+    try:
+        client = HubClient(safelight_home)
+        for _ in range(200):
+            if (safelight_home / "hub.json").exists():
+                break
+            await asyncio.sleep(0.02)
+        assert (await client.status(start=False))["hub"]["host"] == "app"
+    finally:
+        server.stop()
+        await asyncio.wait_for(task, 5)
+
+
+def test_hub_stops_when_its_app_is_gone(safelight_home):
+    """A hub started by the app with --parent-pid stops if its parent changes (app crash)."""
+    import subprocess
+    import sys
+
+    # A parent pid that is not ours: the hub sees a different parent and stops by itself.
+    process = subprocess.Popen(
+        [sys.executable, "-m", "safelight.cli", "hub", "--host", "app", "--parent-pid", "1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    try:
+        assert process.wait(timeout=15) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+    assert not (safelight_home / "hub.json").exists()
