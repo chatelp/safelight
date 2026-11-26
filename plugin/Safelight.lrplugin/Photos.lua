@@ -2,6 +2,9 @@
 -- Photos are addressed by their UUID (the only stable id the SDK can look up directly).
 local LrApplication = import "LrApplication"
 local LrPathUtils = import "LrPathUtils"
+local LrTasks = import "LrTasks"
+
+local Logger = require "Logger"
 
 local Photos = {}
 
@@ -22,21 +25,30 @@ function Photos.uuid(photo)
 end
 
 -- Safelight's own fields (MetadataDefinition.lua). Before Lightroom has updated the
--- catalog for them, reading fails: the photo then simply has none.
+-- catalog for them, reading fails: no photo can be validated yet, so it then has none.
+-- LrTasks.pcall, not pcall: SDK calls may yield, which a plain pcall turns into an error.
 Photos.FIELDS = { "geometry", "validated", "rejectReason" }
 
 function Photos.isValidated(photo)
-    local ok, value = pcall(function()
-        return photo:getPropertyForPlugin(_PLUGIN, "validated")
+    local ok, value = LrTasks.pcall(function()
+        return photo:getPropertyForPlugin(_PLUGIN.id, "validated")
     end)
-    return ok and value == "yes"
+    if not ok then
+        Logger.error("Could not read the Validated field: " .. tostring(value))
+        return false
+    end
+    return value == "yes"
 end
 
 local function safelightFields(catalog, photos)
-    local ok, values = pcall(function()
-        return catalog:batchGetPropertyForPlugin(photos, _PLUGIN, Photos.FIELDS)
+    local ok, values = LrTasks.pcall(function()
+        return catalog:batchGetPropertyForPlugin(photos, _PLUGIN.id, Photos.FIELDS)
     end)
-    return ok and values or {}
+    if not ok then
+        Logger.error("Could not read Safelight's fields: " .. tostring(values))
+        return {}
+    end
+    return values or {}
 end
 
 -- Resolves the photos a command works on:

@@ -857,13 +857,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             )
         history = "Safelight: Straighten" + (" (chosen lines)" if chosen_lines else "")
 
-        async def mark(photo: dict[str, Any]) -> dict[str, str]:
-            """Records in the catalog that Safelight straightened the photo, and gives it
-            the user's color; returns what its label is now, or what went wrong."""
-            fields: dict[str, Any] = {"geometry_by": "safelight"}
-            kept = label and photo.get("label") not in (None, label)
-            if label and not kept:
-                fields["label"] = label
+        async def write(photo: dict[str, Any], fields: dict[str, Any]) -> bool:
             reply = await runner.settle(
                 await hub_client.run(
                     "metadata.set",
@@ -873,10 +867,20 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 )
             )
             failed = (reply.get("result") or {}).get("failures")
-            ok = reply.get("state") == JobState.SUCCEEDED and not failed
-            if not label:
-                return {} if ok else {"label": "failed"}
-            return {"label": f"kept {photo['label']}" if kept else str(label) if ok else "failed"}
+            return reply.get("state") == JobState.SUCCEEDED and not failed
+
+        async def mark(photo: dict[str, Any]) -> dict[str, str]:
+            """Gives a straightened photo the user's color and records in the catalog that
+            Safelight straightened it; says what its label is now, and what went wrong."""
+            out: dict[str, str] = {}
+            if label:
+                if photo.get("label") not in (None, label):
+                    out["label"] = f"kept {photo['label']}"
+                else:
+                    out["label"] = str(label) if await write(photo, {"label": label}) else "failed"
+            if not await write(photo, {"geometry_by": "safelight"}):
+                out["geometry_field"] = "failed"
+            return out
 
         async def apply(photo_id: str, settings: dict[str, Any], name: str) -> str | None:
             """Write settings on one photo; returns what went wrong, or None."""
@@ -1230,6 +1234,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             ctx, "masks.create", {**target, "kind": kind}, confirmation_token
         )
         if created.state != "succeeded" or not adjustments:
+            return created
+        if (created.result or {}).get("validated"):
+            created.message = "The user validated this photo: Safelight does not change it."
             return created
         mask_id = (created.result or {}).get("mask_id")
         if not mask_id:

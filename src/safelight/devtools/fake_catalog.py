@@ -186,11 +186,8 @@ class FakeCatalog:
             return self._plan(photos, f"Change metadata of {len(photos)} photos")
         for photo in photos:
             for name, value in params["fields"].items():
-                if (
-                    (name == "geometry_by"
-                    and value == "none")
-                    or (name == "reject_reason"
-                    and not value)
+                if (name == "geometry_by" and value == "none") or (
+                    name == "reject_reason" and not value
                 ):
                     value = None
                 photo[name] = value
@@ -445,7 +442,13 @@ class FakeCatalog:
             failures = [{"uuid": u, "error": VALIDATED_ERROR} for u in validated]
             if not kept:
                 if params.get("dry_run"):
-                    return {"dry_run": True, "affected": 0, "validated": validated, "missing": []}
+                    return {
+                        "dry_run": True,
+                        "affected": 0,
+                        "validated": validated,
+                        "summary": "Nothing to change: the user validated these photos",
+                        "missing": [],
+                    }
                 return {"requested": len(validated), "updated": 0, "failures": failures}
             result = await handler({**params, "uuids": kept, "target": None}, progress)
             result["validated"] = validated

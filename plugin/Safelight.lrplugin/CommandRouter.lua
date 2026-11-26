@@ -159,15 +159,12 @@ local function withoutValidated(command, params)
         narrowed[key] = value
     end
     narrowed.target = nil
-    for _, uuid in ipairs(missing) do
-        kept[#kept + 1] = uuid -- still reported as missing by the command
-    end
     narrowed.uuids = kept
-    return narrowed, validated
+    return narrowed, validated, missing
 end
 
 local function runGuarded(handler, command, params, job)
-    local narrowed, validated = withoutValidated(command, params)
+    local narrowed, validated, missing = withoutValidated(command, params)
     if not narrowed then
         return handler(params, job)
     end
@@ -178,9 +175,13 @@ local function runGuarded(handler, command, params, job)
     if #narrowed.uuids == 0 then
         if params.dry_run then
             return { dry_run = true, affected = 0, validated = validated,
-                summary = "Nothing to change: the user validated these photos", missing = {} }
+                summary = "Nothing to change: the user validated these photos", missing = missing }
         end
-        return { requested = #validated, updated = 0, failures = failures, validated = validated }
+        return { requested = #validated, updated = 0, failures = failures,
+            validated = validated, missing = missing }
+    end
+    for _, uuid in ipairs(missing) do
+        narrowed.uuids[#narrowed.uuids + 1] = uuid -- still reported as missing by the command
     end
     local result = handler(narrowed, job)
     if type(result) == "table" and not Result.isCancelled(result) then
