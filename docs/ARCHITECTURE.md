@@ -26,7 +26,7 @@ running, the relay opens the menu bar app in the background, which starts it (ab
 a second). If the app is not installed, or brings no hub up within 6 seconds, the
 relay starts the hub on its own (in about half a second). It
 passes the AI client's own name (for example "Claude Desktop") to the hub for the
-activity log. It exposes 25 tools, listed in [TOOLS.md](TOOLS.md): read-only tools
+activity log. It exposes 26 tools, listed in [TOOLS.md](TOOLS.md), plus recipes (MCP prompts) and background guides (MCP resources): read-only tools
 are annotated as such; the others go through the hub's policy. When a change needs
 approval, the relay asks the user through MCP elicitation if the client supports it,
 and otherwise returns the confirmation token to the AI. Previews and contact sheets
@@ -103,22 +103,31 @@ destructive: files replaced on disk cannot be got back.
    default), or if the command is destructive, nothing runs. The hub answers
    `confirmation_required` with a summary and a single-use token, valid 10
    minutes and bound to the exact command and parameters.
-4. The AI client shows the summary to the user and, only after the user
-   approves, sends the same command again with the token.
+4. If the menu bar app is open, the request appears there (popover and a
+   notification with Approve / Decline) and the relay waits up to 2 minutes for
+   the user's answer, keeping the AI client's request alive with progress
+   notifications. Approved, the relay runs the command with the token; declined,
+   the token is cancelled and nothing runs.
+5. Otherwise (app closed, or no answer in time: the request is then withdrawn from
+   the app), the AI client asks: through MCP elicitation when it supports it, or
+   by showing the summary and sending the same command again with the token only
+   after the user approves.
 
-The AI cannot change settings: they are only reachable through the local API
-(the CLI today, the menu bar app later).
+The AI cannot change settings or answer approvals: they are only reachable through
+the local API, used by the app and the CLI. The relay never sees an approval except
+through the hub, and the app answers by approval id, never with the token.
 
 #### HTTP API
 
 | Endpoint | Used by | Purpose |
 |---|---|---|
-| `GET /v1/status` | relays, app | hub, plugin, jobs, clients, settings |
+| `GET /v1/status` | relays, app | hub, plugin, jobs, clients, settings, whether the app is open, changes waiting for approval |
 | `POST /v1/rpc` | relays, CLI | run a command (`command`, `params`, `wait_s`, `confirm`) |
 | `GET /v1/jobs`, `GET /v1/jobs/{id}?wait_s=` | relays, app | recent jobs, one job |
 | `POST /v1/jobs/{id}/cancel` | relays, app | cancel a job |
 | `GET /v1/activity?after=` | app | activity events after a sequence number |
 | `GET`/`PUT /v1/settings` | app, CLI, relays | the user's settings (see Hub) |
+| `GET /v1/approvals/{id}?wait_s=`, `POST /v1/approvals/{id}` | relays, app | wait for the user's answer; answer (`approved`, `declined`, or `withdrawn` by the relay) |
 | `POST /v1/plugin/poll` | plugin | long-poll for jobs |
 | `POST /v1/plugin/progress` | plugin | report progress, learn about cancellation |
 | `POST /v1/plugin/result` | plugin | deliver a job's result |
@@ -183,12 +192,41 @@ progress. It talks to the hub's status API:
 - install or update the Lightroom plugin, register Safelight with Claude Desktop,
   Claude Code, Cursor and Codex;
 - settings: confirmation threshold, read-only mode, launch at login; a Preferences
-  window for the color of changed photos, snapshots and lens names.
+  window for the color of changed photos, snapshots and lens names;
+- changes waiting for the user's approval, at the top of the popover and as
+  notifications with Approve / Decline (Approve asks to unlock the Mac).
 
 The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
 with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds
 (roadmap lot L7) it will embed the Python hub, so users install a single signed `.dmg`.
 Planned (lot L9): the user's preferences, photos waiting for review, and approvals.
+
+## Where knowledge lives
+
+What Safelight learns while working on real photos must live in Safelight, so that any
+AI client benefits, not in the memory of one conversation. For each new piece of
+knowledge, the first question that gets a yes decides where it goes:
+
+1. **Must it never be forgotten?** (never change a photo the user validated, never
+   overwrite the user's corrections, always ask before overwriting files) → **code**: the plugin, the hub's policy or the tool itself
+   enforces it, whatever the AI asks.
+2. **Is it a fact about one photo?** (the user validated it, who corrected the
+   geometry, why it was rejected) → **the catalog**: Safelight's own fields on the photo.
+3. **Is it the user's stable choice?** (color for changed photos, snapshots, real lens
+   names, approval threshold) → **Safelight's settings**, edited in the app.
+4. **Is it a sequence of steps for a job?** (straighten an exhibition folder, sort
+   duplicates) → **a recipe** (`src/safelight/data/recipes`, served as an MCP prompt
+   and by `safelight_guide`).
+5. **Is it how to use one tool?** → **the tool's description** and the notes in its
+   results.
+6. **Is it general background?** (Guided Upright, shift lenses) → **a guide**
+   (`src/safelight/data/guides`, served as an MCP resource and by `safelight_guide`).
+7. **Is it how this user talks to their AI?** → **the AI client's own memory**.
+8. **Can it only be judged by eye?** (which lines are the right guides) → the AI looks,
+   the user decides; Safelight shows what it found (`straighten_lines`).
+
+Knowledge about *building* Safelight goes in the repository ([CLAUDE.md](../CLAUDE.md),
+this document), not in the product.
 
 ## Versioning
 

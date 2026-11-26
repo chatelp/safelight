@@ -9,6 +9,7 @@ import pytest
 from mcp import Client
 from test_tools import EXPECTED_TOOLS, lightroom
 
+from safelight import mcp_server
 from safelight.hub_client import HubClient
 from safelight.mcp_server import build_server
 
@@ -301,6 +302,80 @@ def test_every_tool_is_really_called_by_a_test():
             re.findall(r'(?:call_tool|call|confirmed)\(\s*(?:call,\s*)?"(\w+)"', path.read_text())
         )
     assert EXPECTED_TOOLS - called == set()
+
+
+# -- approvals in the Safelight app ---------------------------------------------------------
+
+
+@contextlib.asynccontextmanager
+async def app_answering(home, decision):
+    """Acts as the menu bar app: polls the status and answers the first approval."""
+    from safelight.protocol import APP_CLIENT
+
+    app = HubClient(home, client_name=APP_CLIENT)
+    seen: list[dict] = []
+
+    async def run():
+        while True:
+            status = await app.status(start=False)
+            for approval in status["approvals"]:
+                seen.append(approval)
+                await app.decide(approval["id"], decision)
+            await asyncio.sleep(0.1)
+
+    task = asyncio.create_task(run())
+    await asyncio.sleep(0.2)  # the hub sees the app
+    try:
+        yield seen
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+async def test_a_change_approved_in_the_app_runs_without_a_token(safelight_home):
+    async with session(safelight_home, threshold=1) as (catalog, call, _mcp):
+        async with app_answering(safelight_home, "approved") as seen:
+            result = await call("set_metadata", photo_ids=[ONE, TWO], rating=5)
+        assert result["state"] == "succeeded"
+        assert catalog.photos[ONE]["rating"] == catalog.photos[TWO]["rating"] == 5
+        assert seen[0]["affected"] == 2 and seen[0]["command"] == "metadata.set"
+
+
+async def test_a_change_declined_in_the_app_does_not_run(safelight_home):
+    async with session(safelight_home, threshold=1) as (catalog, call, _mcp):
+        before = catalog.photos[ONE]["rating"]
+        async with app_answering(safelight_home, "declined"):
+            result = await call("set_metadata", photo_ids=[ONE, TWO], rating=5)
+        assert result["state"] == "declined" and "Safelight app" in result["message"]
+        assert catalog.photos[ONE]["rating"] == before
+
+
+async def test_an_answer_at_the_last_moment_still_counts(safelight_home, monkeypatch):
+    """The user approves between the relay's last wait and its withdrawal."""
+    original = HubClient.decide
+
+    async def late(self, approval_id, decision):
+        if decision == "withdrawn":
+            await original(self, approval_id, "approved")
+        return await original(self, approval_id, decision)
+
+    monkeypatch.setattr(mcp_server, "APP_APPROVAL_WAIT_S", 0.3)
+    monkeypatch.setattr(HubClient, "decide", late)
+    async with session(safelight_home, threshold=1) as (catalog, call, _mcp):
+        async with app_answering(safelight_home, "pending"):
+            result = await call("set_metadata", photo_ids=[ONE, TWO], rating=5)
+        assert result["state"] == "succeeded" and catalog.photos[ONE]["rating"] == 5
+
+
+async def test_without_an_answer_in_the_app_the_ai_client_asks(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "APP_APPROVAL_WAIT_S", 0.5)
+    async with session(safelight_home, threshold=1) as (_catalog, call, _mcp):
+        async with app_answering(safelight_home, "pending"):  # an answer the hub ignores
+            result = await call("set_metadata", photo_ids=[ONE, TWO], rating=5)
+            status = await HubClient(safelight_home).status(start=False)
+        assert result["state"] == "confirmation_required"
+        assert status["approvals"] == []  # withdrawn from the app
 
 
 # -- validated photos ---------------------------------------------------------------------

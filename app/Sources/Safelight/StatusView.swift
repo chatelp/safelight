@@ -17,6 +17,9 @@ struct StatusView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if !model.approvals.isEmpty {
+                approvalsSection
+            }
             Divider()
             lightroomSection
             Divider()
@@ -44,6 +47,35 @@ struct StatusView: View {
             Spacer()
             if let status = model.status, status.jobs.running > 0 {
                 ProgressView().controlSize(.small)
+            }
+        }
+    }
+
+    // MARK: Approvals
+
+    private var approvalsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(model.approvals) { approval in
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("Waiting for your approval", systemImage: "hand.raised")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(approval.title)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("\(ActivityText.clientName(approval.client) ?? approval.client) · \(approval.reason)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack {
+                        Spacer()
+                        Button("Decline") { model.answer(approval.id, approve: false) }
+                        Button("Approve") { model.answer(approval.id, approve: true) }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .controlSize(.small)
+                }
+                .padding(10)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
             }
         }
     }

@@ -21,7 +21,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
 
-from . import __version__, straighten_store
+from . import __version__, knowledge, straighten_store
 from .analysis import findings, groups, measure, summarize, top_of_stacks
 from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
@@ -39,6 +39,9 @@ from .upright import (
 )
 
 STRAIGHTEN_SNAPSHOT = "Before Safelight straighten"
+# How long a change waits for the user's answer in the Safelight app before the AI
+# client asks instead.
+APP_APPROVAL_WAIT_S = 120.0
 
 INSTRUCTIONS = """\
 Safelight lets you work in the user's Adobe Lightroom Classic catalog.
@@ -64,6 +67,12 @@ only if they approve, call the same tool again with the same arguments plus
 
 Long operations may return state "running" with a job_id: follow them with safelight_job
 and stop them with safelight_cancel_job.
+
+The user's stable choices live in Safelight's settings and are applied by Safelight
+itself: the color label for photos it changes, snapshots, real lens names. Before
+straightening an exhibition or sorting duplicates, read the method with safelight_guide
+(also offered as prompts); background guides cover Lightroom's Guided Upright and shift
+lenses.
 
 Safelight is not affiliated with Adobe.
 """
@@ -240,11 +249,67 @@ class Runner:
         reply = await self.client.run(
             command, params, wait_s=30, confirm=confirmation_token, client=name
         )
+        if reply.get("state") == JobState.CONFIRMATION_REQUIRED:
+            # The Safelight app first, when it is open; then the AI client.
+            answer = await self._ask_app(ctx, reply)
+            token = (reply.get("confirmation") or {}).get("token")
+            if answer == "approved":
+                reply = await self.client.run(
+                    command, params, wait_s=30, confirm=token, client=name
+                )
+            elif answer == "declined":
+                return ActionResult(
+                    state="declined", message="The user declined this change in the Safelight app."
+                )
         if reply.get("state") == JobState.CONFIRMATION_REQUIRED and _supports_elicitation(ctx):
             reply = await self._ask_user(ctx, command, params, reply, name)
             if isinstance(reply, ActionResult):
                 return reply
         return self.outcome(reply)
+
+    async def _ask_app(self, ctx: Context | None, reply: dict[str, Any]) -> str | None:
+        """Waits for the user's answer in the Safelight app: approved, declined, or None
+        when the app is closed or nobody answered in time (then the AI client asks)."""
+        approval_id = (reply.get("confirmation") or {}).get("approval_id")
+        if not approval_id:
+            return None
+        try:
+            status = await self.client.status(start=False)
+            if not (status.get("app") or {}).get("connected"):
+                return None
+        except HubUnavailable:
+            return None
+        try:
+            deadline = time.monotonic() + APP_APPROVAL_WAIT_S
+            while (left := deadline - time.monotonic()) > 0:
+                if ctx is not None:
+                    with contextlib.suppress(Exception):  # keeps the client's request alive
+                        await ctx.report_progress(
+                            APP_APPROVAL_WAIT_S - left,
+                            APP_APPROVAL_WAIT_S,
+                            "Waiting for the user's approval in the Safelight app",
+                        )
+                answer = await self.client.approval(approval_id, wait_s=min(10.0, left))
+                state = answer.get("state")
+                if state in ("approved", "declined"):
+                    return state
+                if state != "pending":
+                    return None
+        except HubUnavailable:
+            return None
+        except BaseException:
+            # The AI client cancelled: take the request out of the app, then stop.
+            with anyio.CancelScope(shield=True), contextlib.suppress(HubUnavailable):
+                await self.client.decide(approval_id, "withdrawn")
+            raise
+        # No answer in time: take the request out of the app; the AI client asks instead.
+        # An answer given at the very last moment still counts.
+        try:
+            last = await self.client.decide(approval_id, "withdrawn")
+        except HubUnavailable:
+            return None
+        state = last.get("state")
+        return state if state in ("approved", "declined") else None
 
     async def _ask_user(
         self, ctx: Context | None, command: str, params: dict[str, Any], reply: dict, name: str
@@ -484,6 +549,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         instructions=INSTRUCTIONS,
     )
 
+    knowledge.register(server)
+
     # -- status and jobs ------------------------------------------------------------------
 
     @server.tool(annotations=READ_ONLY)
@@ -494,6 +561,23 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         unavailable.
         """
         return await collect_status(hub_client, _client_name(ctx))
+
+    @server.tool(annotations=READ_ONLY, structured_output=False)
+    async def safelight_guide(
+        topic: Annotated[
+            Literal[
+                "straighten-exhibition-folder", "sort-duplicates", "guided-upright", "shift-lenses"
+            ],
+            Field(
+                description="A recipe (straighten-exhibition-folder, sort-duplicates) or a guide"
+            ),
+        ],
+        folder: Annotated[str | None, Field(description="For a recipe: the folder")] = None,
+    ) -> str:
+        """Safelight's method for a common job (recipe), or background on a topic (guide).
+        Read the recipe before straightening an exhibition folder or sorting duplicates,
+        and follow it."""
+        return knowledge.ENTRIES[topic].text(folder)
 
     @server.tool(annotations=READ_ONLY)
     async def safelight_job(
@@ -642,7 +726,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         heuristics: before rejecting or deleting anything, look at the doubtful photos
         with contact_sheet and ask the user. Nothing is changed in the catalog. To act,
         use set_metadata (flags, ratings, labels) with the photo ids returned here.
-        Closed eyes are not detected; check faces on a contact sheet.
+        Closed eyes are not detected; check faces on a contact sheet. Sharpness alone does
+        not choose the best frame: look for lens flare, passers-by and reflections too
+        (method: safelight_guide "sort-duplicates").
         """
         photos, total = await list_photos(
             runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos

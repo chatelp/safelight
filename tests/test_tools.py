@@ -47,6 +47,7 @@ async def lightroom(home, threshold=50, **settings):
 
 EXPECTED_TOOLS = {
     "safelight_status",
+    "safelight_guide",
     "safelight_job",
     "safelight_cancel_job",
     "get_photos",
@@ -81,6 +82,7 @@ async def test_tool_list_and_read_only_annotations(safelight_home):
     read_only = {n for n, t in tools.items() if t.annotations and t.annotations.read_only_hint}
     assert read_only == {
         "safelight_status",
+        "safelight_guide",
         "safelight_job",
         "get_photos",
         "search_photos",
@@ -563,6 +565,29 @@ async def test_real_lens_names_are_shown_and_searchable(safelight_home):
             assert [p["uuid"] for p in found.structured_content["photos"]] == ["FAKE-0008"], asked
         status = (await mcp.call_tool("safelight_status", {})).structured_content
         assert status["change_label"] == "purple" and status["snapshots"] is True
+
+
+# -- recipes and guides -------------------------------------------------------------------
+
+
+async def test_recipes_and_guides(safelight_home):
+    async with Client(build_server(HubClient(safelight_home))) as mcp:
+        prompts = {p.name: p for p in (await mcp.list_prompts()).prompts}
+        assert set(prompts) == {"straighten-exhibition-folder", "sort-duplicates"}
+        assert [a.name for a in prompts["sort-duplicates"].arguments] == ["folder"]
+        recipe = await mcp.get_prompt("straighten-exhibition-folder", {"folder": "2026-11-19"})
+        text = recipe.messages[0].content.text
+        assert '"2026-11-19"' in text and '{"folder": "2026-11-19"}' in text
+        assert "never choose shadows" in text and "{" + "folder}" not in text
+
+        guides = {str(r.uri) for r in (await mcp.list_resources()).resources}
+        assert guides == {"safelight://guides/guided-upright", "safelight://guides/shift-lenses"}
+        read = await mcp.read_resource("safelight://guides/shift-lenses")
+        assert "optical centre" in read.contents[0].text
+
+        guide = await mcp.call_tool("safelight_guide", {"topic": "sort-duplicates"})
+        text = guide.content[0].text
+        assert "Sharpness alone" in text and "the folder the user names" in text
 
 
 async def test_straighten_never_touches_validated_photos_and_records_its_work(
