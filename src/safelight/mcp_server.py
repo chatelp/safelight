@@ -728,7 +728,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         use set_metadata (flags, ratings, labels) with the photo ids returned here.
         Closed eyes are not detected; check faces on a contact sheet. Sharpness alone does
         not choose the best frame: look for lens flare, passers-by and reflections too
-        (method: safelight_guide "sort-duplicates").
+        (method: safelight_guide "sort-duplicates"). Groups marked choose_by_eye have
+        frames about as sharp as each other: look at them (faces, gestures, light,
+        framing) and let the user choose; best_photo_id is then only the sharpest.
         """
         photos, total = await list_photos(
             runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos

@@ -329,12 +329,21 @@ def groups(
             continue
         ranked = sorted(group, key=lambda pid: _keeper_score(by_id[pid], stats[pid], group, stats))
         best = ranked[-1]
+        by_eye = _close_call(best, group, stats)
+        flagged = by_id[best].get("pick") == 1 or int(by_id[best].get("rating") or 0) > 0
+        why = _why(best, group, stats)
+        if by_eye and not flagged:
+            why = (
+                "frames about as sharp as each other: choose by the moment (faces, gestures, "
+                "light, framing), not by sharpness"
+            )
         out.append(
             {
                 "kind": "burst" if any(pid in burst_ids for pid in group) else "duplicates",
                 "photo_ids": sorted(group, key=lambda pid: _timestamp(by_id[pid]) or 0),
                 "best_photo_id": best,
-                "why_best": _why(best, group, stats),
+                "why_best": why,
+                **({"choose_by_eye": True} if by_eye else {}),
             }
         )
     out.sort(key=lambda g: -len(g["photo_ids"]))
@@ -354,6 +363,31 @@ def _keeper_score(
     elif photo.get("pick") == -1:
         score -= 0.5
     return score
+
+
+# When another well exposed frame is at least this sharp relative to the sharpest, the
+# sharpness says nothing about which frame to keep. Measured on a street shoot the user
+# culled (2026-04-18, 14 groups with one pick): the picked frame was 82 to 95 % as sharp
+# as the sharpest, and the user chose by the moment: faces, gestures, light, framing.
+# With this threshold all 9 groups where the sharpest frame was not the pick are marked.
+# Frames with more than 5 % blown highlights or 20 % crushed shadows do not count.
+CLOSE_FOCUS = 0.75
+
+
+def _well_exposed(s: ImageStats) -> bool:
+    return s.clipped_highlights <= 0.05 and s.clipped_shadows <= 0.2
+
+
+def _close_call(best: str, group: list[str], stats: dict[str, ImageStats]) -> bool:
+    """Whether another well exposed frame is about as sharp as the chosen one (itself well
+    exposed): sharpness then does not tell them apart."""
+    chosen = stats[best]
+    if not _well_exposed(chosen) or not chosen.focus > 0:
+        return False
+    return any(
+        pid != best and _well_exposed(stats[pid]) and stats[pid].focus >= CLOSE_FOCUS * chosen.focus
+        for pid in group
+    )
 
 
 def _why(best: str, group: list[str], stats: dict[str, ImageStats]) -> str:
@@ -391,6 +425,7 @@ def summarize(reports: list[PhotoReport], grouped: list[dict[str, Any]]) -> dict
         "groups": len(grouped),
         "photos_in_groups": in_groups,
         "could_set_aside": in_groups - len(grouped),
+        "groups_to_choose_by_eye": sum(1 for g in grouped if g.get("choose_by_eye")),
     }
 
 
