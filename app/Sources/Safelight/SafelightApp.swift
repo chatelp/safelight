@@ -81,7 +81,12 @@ enum PreviewRenderer {
          "approvals": [{"id": "a1", "command": "develop.apply", "client": "claude-ai",
                         "summary": "Change develop settings on 312 photos",
                         "reason": "This change affects 312 photos, more than the limit of 50.",
-                        "affected": 312, "expires_in_s": 590}]}
+                        "affected": 312, "expires_in_s": 590}],
+         "review": [{"id": "r1", "file": "_DSC8379-HDR.dng", "client": "claude-ai",
+                     "reason": "the guides do not fit one view: maybe a wrong line, check it"},
+                    {"id": "r2", "file": "_DSC8344-HDR.dng", "client": "claude-ai",
+                     "reason": "Safelight did not change it: the lines chosen disagree with the automatic ones. Draw the guides in Lightroom (Transform, Guided)."}],
+         "review_count": 2}
         """
 
     static let sampleActivity = """

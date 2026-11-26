@@ -22,6 +22,10 @@ struct StatusView: View {
             }
             Divider()
             lightroomSection
+            if !model.review.isEmpty {
+                Divider()
+                reviewSection
+            }
             Divider()
             clientsSection
             Divider()
@@ -76,6 +80,46 @@ struct StatusView: View {
                 }
                 .padding(10)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+    }
+
+    // MARK: Photos to check
+
+    private var reviewSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Photos to check (\(model.reviewCount))", systemImage: "eye")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if model.review.count > 1 {
+                    Button("All Done") { model.reviewDone(model.review.map(\.id)) }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                }
+            }
+            ForEach(model.review.prefix(4)) { item in
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.file ?? item.id).lineLimit(1).truncationMode(.middle)
+                        Text(item.reason)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                    Button("Done", systemImage: "checkmark.circle") { model.reviewDone([item.id]) }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("I checked this photo")
+                }
+            }
+            if model.review.count > 4 {
+                Text("and \(model.reviewCount - 4) more")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }

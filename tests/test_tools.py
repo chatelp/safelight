@@ -610,3 +610,20 @@ async def test_straighten_never_touches_validated_photos_and_records_its_work(
 
         only = await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
         assert only.is_error and "validated" in str(only.content)
+
+
+async def test_photos_needing_the_users_eye_go_to_the_app(safelight_home, monkeypatch):
+    warned = _plan()
+    warned.warnings = ["the guides do not fit one view: maybe a wrong line, check it"]
+    plans = iter([warned, _plan()])
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: next(plans))
+    async with (
+        lightroom(safelight_home) as (_catalog, client),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001", "FAKE-0002"]})
+        review = (await client.review())["review"]
+        assert [e["id"] for e in review] == ["FAKE-0001"]
+        assert "wrong line" in review[0]["reason"] and review[0]["file"] == "DSC00001.ARW"
+        await client.review(done=["FAKE-0001"])
+        assert (await client.review())["review"] == []

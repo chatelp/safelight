@@ -895,6 +895,37 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             else:
                 rotated.append(entry)
 
+        async def note_review(done: list[dict[str, Any]]) -> None:
+            """Puts the photos that need the user's eye in the app's list of photos to
+            check (it stays there until the user marks them done)."""
+            items = [
+                {"id": e["id"], "file": e.get("file"), "reason": "; ".join(e["warnings"])}
+                for e in done
+                if e.get("warnings")
+            ]
+            items += [
+                {
+                    "id": e["id"],
+                    "file": e.get("file"),
+                    "reason": "Safelight did not change it: the lines chosen disagree with the "
+                    "automatic ones. Draw the guides in Lightroom (Transform, Guided).",
+                }
+                for e in left_to_user
+            ]
+            items += [
+                {
+                    "id": e["id"],
+                    "file": e.get("file"),
+                    "reason": f"Not straightened, and its earlier correction could not be put "
+                    f"back: {e['reason']}",
+                }
+                for e in not_done
+                if e["id"] in before and e.get("put_back") is False  # lost its geometry
+            ]
+            if items:
+                with contextlib.suppress(HubUnavailable):
+                    await hub_client.review(add=items)
+
         def report(done: list[dict[str, Any]]) -> ActionResult:
             to_review = [entry["id"] for entry in done if entry.get("warnings")]
             notes = [
@@ -935,6 +966,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
 
         if not upright_photos:
             if chosen_lines is not None:
+                await note_review([])
                 return report([])
             raise ToolError(
                 f"Nothing to straighten: {len(already)} photos already have an Upright "
@@ -1079,6 +1111,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         failed_in_a_row = 0 if await put_back(photo_id) else failed_in_a_row + 1
                         if failed_in_a_row == 2:
                             break  # Lightroom is gone or busy: the snapshots remain
+        await note_review(done)
         return report(done)
 
     def _choose(photo_id: str, numbers: list[int], settings: dict[str, Any]) -> Plan | dict:
