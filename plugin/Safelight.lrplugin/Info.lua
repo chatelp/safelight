@@ -13,6 +13,10 @@ return {
     LrShutdownPlugin = "PluginShutdown.lua",
     LrShutdownApp = "PluginShutdown.lua",
 
+    -- Safelight's fields on each photo (validated, geometry, reject reason).
+    LrMetadataProvider = "MetadataDefinition.lua",
+    LrMetadataTagsetFactory = "Tagset.lua",
+
     LrExportMenuItems = {
         {
             title = "Safelight Status",

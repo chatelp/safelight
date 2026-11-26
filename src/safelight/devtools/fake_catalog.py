@@ -13,6 +13,7 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter
 
+from ..policy import EDITING_COMMANDS, VALIDATED_ERROR
 from .fake_plugin import CommandError, Handler, Progress
 
 # Photos 2 and 3 are a burst: 1 s apart, same scene (3 is the sharper frame).
@@ -49,6 +50,9 @@ class FakeCatalog:
                 "captured_at": CAPTURE_TIMES[index % len(CAPTURE_TIMES)],
                 "camera": "ILCE-7M3",
                 "lens": "DT 17mm F4 SAM" if index == 7 else "FE 24-70mm F4 ZA OSS",
+                "validated": False,
+                "geometry_by": None,
+                "reject_reason": None,
                 "focal_length_mm": [24, 35, 35, 50, 70, 85, 24, 135][index % 8],
                 "aperture": [1.8, 2.8, 2.8, 4.0, 5.6, 1.4, 8.0, 2.0][index % 8],
             }
@@ -88,6 +92,9 @@ class FakeCatalog:
             "captured_at",
             "camera",
             "lens",
+            "validated",
+            "geometry_by",
+            "reject_reason",
             "focal_length_mm",
             "aperture",
         )
@@ -179,6 +186,10 @@ class FakeCatalog:
             return self._plan(photos, f"Change metadata of {len(photos)} photos")
         for photo in photos:
             for name, value in params["fields"].items():
+                if (name == "geometry_by" and value == "none") or (
+                    name == "reject_reason" and not value
+                ):
+                    value = None
                 photo[name] = value
         return {"requested": len(photos), "updated": len(photos), "failures": []}
 
@@ -409,6 +420,46 @@ class FakeCatalog:
         return {"deleted": found[0]["name"]}
 
     def handlers(self) -> dict[str, Handler]:
+        return {
+            name: self._without_validated(handler) if name in EDITING_COMMANDS else handler
+            for name, handler in self._handlers().items()
+        }
+
+    def _without_validated(self, handler: Handler) -> Handler:
+        """Like the plugin's router: validated photos are taken out of edits."""
+
+        async def guarded(params: dict[str, Any], progress: Progress) -> Any:
+            if params.get("uuids"):
+                ids = [u for u in params["uuids"]]
+            elif params.get("target") == "active":
+                ids = self.selected[:1]
+            else:
+                ids = list(self.selected)
+            validated = [u for u in ids if self.photos.get(u, {}).get("validated")]
+            if not validated:
+                return await handler(params, progress)
+            kept = [u for u in ids if u not in validated]
+            failures = [{"uuid": u, "error": VALIDATED_ERROR} for u in validated]
+            if not kept:
+                if params.get("dry_run"):
+                    return {
+                        "dry_run": True,
+                        "affected": 0,
+                        "validated": validated,
+                        "summary": "Nothing to change: the user validated these photos",
+                        "missing": [],
+                    }
+                return {"requested": len(validated), "updated": 0, "failures": failures}
+            result = await handler({**params, "uuids": kept, "target": None}, progress)
+            result["validated"] = validated
+            if not params.get("dry_run"):
+                result["requested"] = result.get("requested", 0) + len(validated)
+                result["failures"] = [*(result.get("failures") or []), *failures]
+            return result
+
+        return guarded
+
+    def _handlers(self) -> dict[str, Handler]:
         return {
             "catalog.info": self.info,
             "photos.get": self.get,

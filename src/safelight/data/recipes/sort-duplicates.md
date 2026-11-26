@@ -13,9 +13,9 @@ Lightroom folder "{folder}".
    story).
 4. Propose which frame to keep in each group, and why. The user decides: reject nothing
    before they answer.
-5. For the frames the user rejects, use set_metadata with pick "rejected", and say why in
-   your report ("duplicate of _DSC1234: passer-by", "flare"). Never touch the frames
-   under an HDR merge.
+5. For the frames the user rejects, use set_metadata with pick "rejected" and record why
+   with reject_reason ("duplicate of _DSC1234: passer-by", "flare"). Never touch the
+   frames under an HDR merge.
 6. Safelight never deletes photos: the user removes rejected photos in Lightroom if they
    want to.
 7. Report the frames kept and rejected, group by group.

@@ -2,6 +2,9 @@
 -- Photos are addressed by their UUID (the only stable id the SDK can look up directly).
 local LrApplication = import "LrApplication"
 local LrPathUtils = import "LrPathUtils"
+local LrTasks = import "LrTasks"
+
+local Logger = require "Logger"
 
 local Photos = {}
 
@@ -19,6 +22,33 @@ end
 
 function Photos.uuid(photo)
     return photo:getRawMetadata("uuid")
+end
+
+-- Safelight's own fields (MetadataDefinition.lua). Before Lightroom has updated the
+-- catalog for them, reading fails: no photo can be validated yet, so it then has none.
+-- LrTasks.pcall, not pcall: SDK calls may yield, which a plain pcall turns into an error.
+Photos.FIELDS = { "geometry", "validated", "rejectReason" }
+
+function Photos.isValidated(photo)
+    local ok, value = LrTasks.pcall(function()
+        return photo:getPropertyForPlugin(_PLUGIN.id, "validated")
+    end)
+    if not ok then
+        Logger.error("Could not read the Validated field: " .. tostring(value))
+        return false
+    end
+    return value == "yes"
+end
+
+local function safelightFields(catalog, photos)
+    local ok, values = LrTasks.pcall(function()
+        return catalog:batchGetPropertyForPlugin(photos, _PLUGIN.id, Photos.FIELDS)
+    end)
+    if not ok then
+        Logger.error("Could not read Safelight's fields: " .. tostring(values))
+        return {}
+    end
+    return values or {}
 end
 
 -- Resolves the photos a command works on:
@@ -68,10 +98,12 @@ function Photos.summaries(photos)
     local catalog = Photos.catalog()
     local raw = catalog:batchGetRawMetadata(photos, RAW_KEYS) or {}
     local formatted = catalog:batchGetFormattedMetadata(photos, FORMATTED_KEYS) or {}
+    local own = safelightFields(catalog, photos)
     local out = {}
     for i, photo in ipairs(photos) do
         local r = raw[photo] or {}
         local f = formatted[photo] or {}
+        local s = own[photo] or {}
         out[i] = {
             uuid = r.uuid,
             file_name = r.path and LrPathUtils.leafName(r.path) or nil,
@@ -103,6 +135,10 @@ function Photos.summaries(photos)
             -- 1 for the photo shown on top of a stack, 2+ for the frames under it
             -- (for example the brackets under an HDR merge); nil when not stacked.
             stack_position = r.isInStackInFolder and r.stackPositionInFolder or nil,
+            -- Safelight's fields: validated photos keep their edits.
+            validated = s.validated == "yes",
+            geometry_by = nonEmpty(s.geometry),
+            reject_reason = nonEmpty(s.rejectReason),
         }
     end
     return out

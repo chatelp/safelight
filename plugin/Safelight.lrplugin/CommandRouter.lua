@@ -10,6 +10,7 @@ local Export = require "Export"
 local Inspect = require "Inspect"
 local Masks = require "Masks"
 local Metadata = require "Metadata"
+local Photos = require "Photos"
 local Logger = require "Logger"
 local Result = require "Result"
 local Version = require "Version"
@@ -114,6 +115,88 @@ register("inspect.raw_metadata", Inspect.rawMetadata)
 register("inspect.thumbnails", Inspect.thumbnails)
 register("inspect.develop_controller", Inspect.developController)
 
+-- Commands that change a photo's edits. Photos the user validated (Safelight field
+-- "Validated") are taken out of them and reported, whatever the AI client asked.
+-- Keep in sync with EDITING_COMMANDS in src/safelight/policy.py (a test checks it).
+local EDITING = {
+    ["develop.apply"] = true,
+    ["develop.copy"] = true,
+    ["develop.auto_tone"] = true,
+    ["develop.auto_white_balance"] = true,
+    ["develop.reset"] = true,
+    ["develop.apply_preset"] = true,
+    ["snapshots.create"] = true,
+    ["snapshots.apply"] = true,
+    ["snapshots.delete"] = true,
+    ["masks.adjust"] = true,
+    ["masks.create"] = true,
+    ["masks.invert"] = true,
+    ["masks.delete"] = true,
+    ["photos.rotate"] = true,
+}
+local VALIDATED = "VALIDATED: the user validated this photo, so Safelight does not change its edits"
+
+-- Returns the params without validated photos and the validated ids, or nil when the
+-- command is not an edit or no photo is validated.
+local function withoutValidated(command, params)
+    if not EDITING[command] then
+        return nil
+    end
+    local photos, missing = Photos.resolve(params, { allowEmpty = true })
+    local kept, validated = {}, {}
+    for _, photo in ipairs(photos) do
+        if Photos.isValidated(photo) then
+            validated[#validated + 1] = Photos.uuid(photo)
+        else
+            kept[#kept + 1] = Photos.uuid(photo)
+        end
+    end
+    if #validated == 0 then
+        return nil
+    end
+    local narrowed = {}
+    for key, value in pairs(params) do
+        narrowed[key] = value
+    end
+    narrowed.target = nil
+    narrowed.uuids = kept
+    return narrowed, validated, missing
+end
+
+local function runGuarded(handler, command, params, job)
+    local narrowed, validated, missing = withoutValidated(command, params)
+    if not narrowed then
+        return handler(params, job)
+    end
+    local failures = {}
+    for _, uuid in ipairs(validated) do
+        failures[#failures + 1] = { uuid = uuid, error = VALIDATED }
+    end
+    if #narrowed.uuids == 0 then
+        if params.dry_run then
+            return { dry_run = true, affected = 0, validated = validated,
+                summary = "Nothing to change: the user validated these photos", missing = missing }
+        end
+        return { requested = #validated, updated = 0, failures = failures,
+            validated = validated, missing = missing }
+    end
+    for _, uuid in ipairs(missing) do
+        narrowed.uuids[#narrowed.uuids + 1] = uuid -- still reported as missing by the command
+    end
+    local result = handler(narrowed, job)
+    if type(result) == "table" and not Result.isCancelled(result) then
+        result.validated = validated
+        if not params.dry_run then
+            result.requested = (result.requested or 0) + #validated
+            result.failures = result.failures or {}
+            for _, failure in ipairs(failures) do
+                result.failures[#result.failures + 1] = failure
+            end
+        end
+    end
+    return result
+end
+
 -- Runs one command and always returns a response table for the hub.
 function CommandRouter.dispatch(request, job)
     job = job or noJob
@@ -136,7 +219,7 @@ function CommandRouter.dispatch(request, job)
         }
     end
 
-    local ok, result = LrTasks.pcall(handler, request.params or {}, job)
+    local ok, result = LrTasks.pcall(runGuarded, handler, command, request.params or {}, job)
     if not ok then
         Logger.error("Command failed: " .. command .. " -> " .. tostring(result))
         return {

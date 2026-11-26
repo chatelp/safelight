@@ -590,6 +590,28 @@ async def test_recipes_and_guides(safelight_home):
         assert "Sharpness alone" in text and "the folder the user names" in text
 
 
+async def test_straighten_never_touches_validated_photos_and_records_its_work(
+    safelight_home, monkeypatch
+):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: _plan())
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        catalog.photos["FAKE-0001"]["validated"] = True
+        before = dict(catalog.photos["FAKE-0001"]["settings"])
+        args = {"photo_ids": ["FAKE-0001", "FAKE-0002"]}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        assert [e["id"] for e in result["validated_skipped"]] == ["FAKE-0001"]
+        assert catalog.photos["FAKE-0001"]["settings"] == before
+        assert catalog.photos["FAKE-0001"]["label"] is None
+        assert catalog.photos["FAKE-0002"]["geometry_by"] == "safelight"
+        assert catalog.photos["FAKE-0002"]["label"] == "purple"
+
+        only = await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        assert only.is_error and "validated" in str(only.content)
+
+
 async def test_photos_needing_the_users_eye_go_to_the_app(safelight_home, monkeypatch):
     warned = _plan()
     warned.warnings = ["the guides do not fit one view: maybe a wrong line, check it"]
