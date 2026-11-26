@@ -26,9 +26,10 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md). This file holds what those don't: how
 ## Testing against the real Lightroom
 
 - The plugin is loaded from this checkout through Lightroom's Plug-in Manager. After a
-  Lua change, reload it there (Plug-in Manager, Safelight, Reload); a change to
-  `MetadataDefinition.lua` needs a new `schemaVersion`, and Lightroom then asks once to
-  update the catalog.
+  Lua change, reload it there (Plug-in Manager, Safelight, Reload). A new Lua file is
+  only seen after restarting Lightroom: a reload then fails with "No script by the name
+  …" and disables the plugin (enable it again after the restart). A change to
+  `MetadataDefinition.lua` needs a new `schemaVersion`.
 - The catalog is the maintainer's real one. Read freely (searches, previews). Write only
   on test photos: virtual copies named "Safelight Test …" in the "Safelight Tests"
   collection, unless the maintainer says otherwise. Never overwrite their corrections.
