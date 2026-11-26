@@ -3,7 +3,13 @@
 import re
 from pathlib import Path
 
-from safelight.policy import DEFAULT_POLICIES, is_classified, policy_for
+from safelight.policy import (
+    DEFAULT_POLICIES,
+    EDITING_COMMANDS,
+    VALIDATED_ERROR,
+    is_classified,
+    policy_for,
+)
 
 ROUTER = Path(__file__).resolve().parents[1] / "plugin" / "Safelight.lrplugin" / "CommandRouter.lua"
 
@@ -38,3 +44,13 @@ def test_an_export_that_overwrites_files_is_always_confirmed():
     overwrite = policy_for("export.photos", params={"if_exists": "overwrite"})
     assert overwrite.destructive and overwrite.supports_dry_run
     assert "replaces files" in overwrite.reason
+
+
+def test_validated_photos_are_protected_from_the_same_commands_in_the_plugin():
+    router = ROUTER.read_text(encoding="utf-8")
+    block = router[
+        router.index("local EDITING = {") : router.index("}", router.index("local EDITING = {"))
+    ]
+    assert set(re.findall(r'\["([^"]+)"\] = true', block)) == EDITING_COMMANDS
+    assert set(plugin_commands()) >= EDITING_COMMANDS
+    assert f'local VALIDATED = "{VALIDATED_ERROR}"' in router

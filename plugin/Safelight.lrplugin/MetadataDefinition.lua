@@ -1,0 +1,42 @@
+-- Safelight's own fields on each photo, kept in the catalog (Metadata panel, "Safelight"
+-- set). They hold facts about one photo that every AI client must respect:
+--   geometry   who corrected the perspective last: Safelight, or the user;
+--   validated  the user approved the photo's edits: Safelight never changes them;
+--   rejectReason  why the photo was rejected (duplicate, passer-by, flare...).
+-- Changing these definitions needs a new schemaVersion; Lightroom then asks once to
+-- update the catalog.
+return {
+    metadataFieldsForPhotos = {
+        {
+            id = "geometry",
+            title = "Geometry",
+            dataType = "enum",
+            values = {
+                { value = nil, title = "Not set" },
+                { value = "safelight", title = "Straightened by Safelight" },
+                { value = "user", title = "Corrected by you" },
+            },
+            browsable = true,
+            searchable = true,
+        },
+        {
+            id = "validated",
+            title = "Validated",
+            dataType = "enum",
+            values = {
+                { value = nil, title = "No" },
+                { value = "yes", title = "Yes: Safelight leaves its edits alone" },
+            },
+            browsable = true,
+            searchable = true,
+        },
+        {
+            id = "rejectReason",
+            title = "Reject reason",
+            dataType = "string",
+            browsable = true,
+            searchable = true,
+        },
+    },
+    schemaVersion = 1,
+}

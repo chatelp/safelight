@@ -83,6 +83,30 @@ DEFAULT_POLICIES: dict[str, CommandPolicy] = {
 }
 
 
+# Commands that change a photo's edits. The plugin takes the photos the user validated
+# (Safelight's "Validated" field) out of them, whatever the AI client asked; the list is
+# mirrored in plugin/Safelight.lrplugin/CommandRouter.lua (EDITING), and a test checks it.
+EDITING_COMMANDS = frozenset(
+    {
+        "develop.apply",
+        "develop.copy",
+        "develop.auto_tone",
+        "develop.auto_white_balance",
+        "develop.reset",
+        "develop.apply_preset",
+        "snapshots.create",
+        "snapshots.apply",
+        "snapshots.delete",
+        "masks.adjust",
+        "masks.create",
+        "masks.invert",
+        "masks.delete",
+        "photos.rotate",
+    }
+)
+VALIDATED_ERROR = "VALIDATED: the user validated this photo, so Safelight does not change its edits"
+
+
 def policy_for(
     command: str,
     policies: dict[str, CommandPolicy] | None = None,

@@ -301,3 +301,51 @@ def test_every_tool_is_really_called_by_a_test():
             re.findall(r'(?:call_tool|call|confirmed)\(\s*(?:call,\s*)?"(\w+)"', path.read_text())
         )
     assert EXPECTED_TOOLS - called == set()
+
+
+# -- validated photos ---------------------------------------------------------------------
+
+
+async def test_validated_photos_keep_their_edits(safelight_home):
+    async with session(safelight_home) as (catalog, call, mcp):
+        await call("set_metadata", photo_ids=[ONE], validated=True, reject_reason="passer-by")
+        assert catalog.photos[ONE]["validated"] is True
+        assert catalog.photos[ONE]["reject_reason"] == "passer-by"
+        shown = (await mcp.call_tool("get_photos", {"photo_ids": [ONE]})).structured_content
+        assert shown["photos"][0]["validated"] is True
+
+        result = await call("edit_develop", photo_ids=[ONE, TWO], settings={"Exposure": 0.5})
+        assert catalog.photos[ONE]["settings"]["Exposure2012"] == 0.0  # untouched
+        assert catalog.photos[TWO]["settings"]["Exposure2012"] == 0.5
+        assert [f["uuid"] for f in result["result"]["failures"]] == [ONE]
+        assert "VALIDATED" in result["result"]["failures"][0]["error"]
+
+        # Only the validated photo: nothing changes, and it says why.
+        alone = await mcp.call_tool(
+            "edit_develop", {"photo_ids": [ONE], "settings": {"Exposure": 1}}
+        )
+        assert catalog.photos[ONE]["settings"]["Exposure2012"] == 0.0
+        assert "VALIDATED" in str(alone.structured_content)
+
+        # Metadata still changes (the user can take the validation back).
+        await call("set_metadata", photo_ids=[ONE], validated=False, reject_reason="")
+        assert (
+            catalog.photos[ONE]["validated"] is False
+            and catalog.photos[ONE]["reject_reason"] is None
+        )
+        await call("edit_develop", photo_ids=[ONE], settings={"Exposure": 0.25})
+        assert catalog.photos[ONE]["settings"]["Exposure2012"] == 0.25
+
+
+async def test_search_by_validated_and_geometry(safelight_home):
+    async with session(safelight_home) as (catalog, _call, mcp):
+        catalog.photos[ONE]["validated"] = True
+        catalog.photos[TWO]["geometry_by"] = "safelight"
+        found = await mcp.call_tool(
+            "search_photos", {"filters": {"rating_min": 0, "validated": True}}
+        )
+        assert [p["uuid"] for p in found.structured_content["photos"]] == [ONE]
+        found = await mcp.call_tool(
+            "search_photos", {"filters": {"rating_min": 0, "geometry_by": "safelight"}}
+        )
+        assert [p["uuid"] for p in found.structured_content["photos"]] == [TWO]

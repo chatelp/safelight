@@ -33,6 +33,14 @@ local FIELDS = {
         return v == false or (type(v) == "table" and type(v.latitude) == "number" and type(v.longitude) == "number")
     end },
     gps_altitude = { key = "gpsAltitude", valid = function(v) return type(v) == "number" end },
+    -- Safelight's own fields (MetadataDefinition.lua).
+    validated = { plugin = "validated", valid = function(v) return type(v) == "boolean" end,
+        convert = function(v) return v and "yes" or nil end },
+    geometry_by = { plugin = "geometry", valid = function(v)
+        return v == "safelight" or v == "user" or v == "none"
+    end, convert = function(v) return v ~= "none" and v or nil end },
+    reject_reason = { plugin = "rejectReason", valid = isString,
+        convert = function(v) return v ~= "" and v or nil end },
 }
 
 local function fieldNames()
@@ -61,7 +69,10 @@ function Metadata.set(params, job)
         if field.key == "gps" and value == false then
             value = nil -- removes the location
         end
-        changes[#changes + 1] = { key = field.key, value = value }
+        if field.convert then
+            value = field.convert(value)
+        end
+        changes[#changes + 1] = { key = field.key, plugin = field.plugin, value = value }
     end
     local photos, missing = Photos.resolve(params)
     if params.dry_run then
@@ -69,7 +80,11 @@ function Metadata.set(params, job)
     end
     local result = Batch.write("Safelight: Metadata", photos, job, function(photo)
         for _, change in ipairs(changes) do
-            photo:setRawMetadata(change.key, change.value)
+            if change.plugin then
+                photo:setPropertyForPlugin(_PLUGIN, change.plugin, change.value)
+            else
+                photo:setRawMetadata(change.key, change.value)
+            end
         end
     end)
     result.missing = missing

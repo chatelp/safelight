@@ -21,6 +21,24 @@ function Photos.uuid(photo)
     return photo:getRawMetadata("uuid")
 end
 
+-- Safelight's own fields (MetadataDefinition.lua). Before Lightroom has updated the
+-- catalog for them, reading fails: the photo then simply has none.
+Photos.FIELDS = { "geometry", "validated", "rejectReason" }
+
+function Photos.isValidated(photo)
+    local ok, value = pcall(function()
+        return photo:getPropertyForPlugin(_PLUGIN, "validated")
+    end)
+    return ok and value == "yes"
+end
+
+local function safelightFields(catalog, photos)
+    local ok, values = pcall(function()
+        return catalog:batchGetPropertyForPlugin(photos, _PLUGIN, Photos.FIELDS)
+    end)
+    return ok and values or {}
+end
+
 -- Resolves the photos a command works on:
 --   params.uuids = { ... }  -> those photos (unknown ids are reported in `missing`)
 --   params.target = "active"   -> the active photo
@@ -68,10 +86,12 @@ function Photos.summaries(photos)
     local catalog = Photos.catalog()
     local raw = catalog:batchGetRawMetadata(photos, RAW_KEYS) or {}
     local formatted = catalog:batchGetFormattedMetadata(photos, FORMATTED_KEYS) or {}
+    local own = safelightFields(catalog, photos)
     local out = {}
     for i, photo in ipairs(photos) do
         local r = raw[photo] or {}
         local f = formatted[photo] or {}
+        local s = own[photo] or {}
         out[i] = {
             uuid = r.uuid,
             file_name = r.path and LrPathUtils.leafName(r.path) or nil,
@@ -103,6 +123,10 @@ function Photos.summaries(photos)
             -- 1 for the photo shown on top of a stack, 2+ for the frames under it
             -- (for example the brackets under an HDR merge); nil when not stacked.
             stack_position = r.isInStackInFolder and r.stackPositionInFolder or nil,
+            -- Safelight's fields: validated photos keep their edits.
+            validated = s.validated == "yes",
+            geometry_by = nonEmpty(s.geometry),
+            reject_reason = nonEmpty(s.rejectReason),
         }
     end
     return out

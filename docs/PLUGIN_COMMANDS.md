@@ -20,6 +20,12 @@ development you can run any of them with `uv run safelight call <command> '<json
 - **Develop UI path.** Commands marked *(Develop)* open the photo in the Develop module
   (they change what Lightroom shows) and work one photo at a time.
 - **Values** are as shown in Lightroom (Exposure in EV, most sliders −100…100).
+- **Validated photos.** Commands that change a photo's edits (`develop.*` changes,
+  `snapshots.create/apply/delete`, `masks.adjust/create/invert/delete`, `photos.rotate`)
+  leave out the photos whose Safelight field *Validated* is set: they are listed in
+  `validated` and in `failures` with an error starting `VALIDATED`. The router does it
+  for every such command (`EDITING` in `CommandRouter.lua`, `EDITING_COMMANDS` in
+  `policy.py`).
 
 Policy column: R read-only · M changes the catalog (dry run, confirmation past the
 threshold) · S changes the catalog without a dry run · D destructive (always confirmed).
@@ -29,7 +35,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 | Command | Policy | Params | Answer |
 |---|---|---|---|
 | `catalog.info` | R | — | Lightroom version, catalog path, current module, active photo, selection size |
-| `photos.get` | R | photos, `limit`, `offset` | photo descriptions (file, format, size, capture date, rating, flag, label, camera, lens, exposure, GPS, title, caption, keywords, position in a stack) |
+| `photos.get` | R | photos, `limit`, `offset` | photo descriptions (file, format, size, capture date, rating, flag, label, camera, lens, exposure, GPS, title, caption, keywords, position in a stack, and Safelight's fields `validated`, `geometry_by`, `reject_reason`) |
 | `photos.search` | R | `search` (one criterion, or `{combine, items: [...]}`), `sort`, `ascending`, `limit`, `offset` | matching photo descriptions and `total` |
 | `photos.preview` | R | photo, `size` (64–4096, a minimum) | base64 JPEG rendered by Lightroom with the edits |
 | `photos.rotate` | M | photos, `direction` (`left`/`right`) | batch result |
@@ -49,7 +55,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 
 | Command | Policy | Params | Answer |
 |---|---|---|---|
-| `metadata.set` | M | photos, `fields`: `rating` (0–5), `pick` (−1, 0, 1), `label` (`red`…`purple`, `none`), `title`, `caption`, `headline`, `copyright`, `creator`, `location`, `city`, `state`, `country`, `country_code`, `event`, `alt_text`, `extended_description`, `gps` (`{latitude, longitude}` or `false`), `gps_altitude` | batch result |
+| `metadata.set` | M | photos, `fields`: `rating` (0–5), `pick` (−1, 0, 1), `label` (`red`…`purple`, `none`), `title`, `caption`, `headline`, `copyright`, `creator`, `location`, `city`, `state`, `country`, `country_code`, `event`, `alt_text`, `extended_description`, `gps` (`{latitude, longitude}` or `false`), `gps_altitude`; Safelight's fields `validated` (true/false), `geometry_by` (`safelight`, `user`, `none`), `reject_reason` (`""` clears it) | batch result |
 | `keywords.list` | R | `query`, `limit` | keyword paths (`A > B > C`) |
 | `keywords.add` | M | photos, `keywords` (paths; missing ones are created) | batch result, `keywords_not_created` |
 | `keywords.remove` | M | photos, `keywords` (a name matches anywhere, a path exactly) | batch result, `keywords_not_found` |

@@ -563,3 +563,25 @@ async def test_real_lens_names_are_shown_and_searchable(safelight_home):
             assert [p["uuid"] for p in found.structured_content["photos"]] == ["FAKE-0008"], asked
         status = (await mcp.call_tool("safelight_status", {})).structured_content
         assert status["change_label"] == "purple" and status["snapshots"] is True
+
+
+async def test_straighten_never_touches_validated_photos_and_records_its_work(
+    safelight_home, monkeypatch
+):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: _plan())
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        catalog.photos["FAKE-0001"]["validated"] = True
+        before = dict(catalog.photos["FAKE-0001"]["settings"])
+        args = {"photo_ids": ["FAKE-0001", "FAKE-0002"]}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        assert [e["id"] for e in result["validated_skipped"]] == ["FAKE-0001"]
+        assert catalog.photos["FAKE-0001"]["settings"] == before
+        assert catalog.photos["FAKE-0001"]["label"] is None
+        assert catalog.photos["FAKE-0002"]["geometry_by"] == "safelight"
+        assert catalog.photos["FAKE-0002"]["label"] == "purple"
+
+        only = await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        assert only.is_error and "validated" in str(only.content)

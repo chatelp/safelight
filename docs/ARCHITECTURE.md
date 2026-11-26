@@ -148,6 +148,14 @@ plugin acts as a **client of the hub**:
 The commands the plugin understands are listed in
 [PLUGIN_COMMANDS.md](PLUGIN_COMMANDS.md).
 
+The plugin also gives each photo three **Safelight fields**, kept in the catalog and
+shown in the Metadata panel (`MetadataDefinition.lua`, "Safelight" set): *Validated*
+(the user approves the photo's edits), *Geometry* (straightened by Safelight, or
+corrected by the user) and *Reject reason*. They are facts about one photo that every
+AI client must respect: the plugin's router takes validated photos out of every
+command that changes edits, whatever the client asked. Adding or changing a field
+needs a new `schemaVersion`; Lightroom then asks once to update the catalog.
+
 Measured on Lightroom Classic 16.0.1 (roadmap lot L1): a command round trip
 takes 1.7 ms median (2.1 ms at the 95th percentile); the plugin connects about
 8 s after Lightroom loads it and reconnects within 1 to 2.5 s after a hub

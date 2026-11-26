@@ -58,6 +58,13 @@ class PhotoFilters(BaseModel):
     )
     aperture_max: float | None = Field(default=None, ge=0, description="Largest f-number, e.g. 4")
     shutter_min_s: float | None = Field(default=None, ge=0, description="Exposure time in seconds")
+    validated: bool | None = Field(
+        default=None,
+        description="True: photos the user validated (Safelight never changes their edits)",
+    )
+    geometry_by: Literal["safelight", "user"] | None = Field(
+        default=None, description="Who last corrected the perspective, per Safelight's field"
+    )
     shutter_max_s: float | None = Field(default=None, ge=0, description="Exposure time in seconds")
 
 
@@ -150,12 +157,25 @@ POST_FILTERS = (
 )
 
 
+# Safelight's own fields on each photo, compared for equality.
+EQUAL_POST_FILTERS = ("validated", "geometry_by")
+
+
 def has_post_filters(filters: PhotoFilters) -> bool:
-    return any(getattr(filters, name) is not None for name, _, _ in POST_FILTERS)
+    return any(getattr(filters, name) is not None for name, _, _ in POST_FILTERS) or any(
+        getattr(filters, name) is not None for name in EQUAL_POST_FILTERS
+    )
 
 
 def matches_post_filters(photo: dict[str, Any], filters: PhotoFilters) -> bool:
     """Filters Lightroom's search cannot apply, checked on a photo description."""
+    for name in EQUAL_POST_FILTERS:
+        wanted = getattr(filters, name)
+        if (
+            wanted is not None
+            and (photo.get(name) or (False if name == "validated" else None)) != wanted
+        ):
+            return False
     for name, key, operation in POST_FILTERS:
         wanted = getattr(filters, name)
         if wanted is None:

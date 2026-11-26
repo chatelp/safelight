@@ -20,7 +20,9 @@ Safelight reads your Lightroom Classic catalog through the Lightroom SDK, when a
   title, caption, keywords, and **GPS coordinates** when the photo has them;
 - Develop settings, masks, snapshots, presets and collections;
 - previews of photos, which can show people and places;
-- the Lightroom version, the catalog's path and what is selected.
+- the Lightroom version, the catalog's path and what is selected;
+- Safelight's own fields on each photo (validated, who corrected the geometry, reject
+  reason), which it keeps in your catalog.
 
 It changes your catalog, and writes exported files where asked, only through the tools an
 AI client calls. Changes to many photos, and deletions such as a collection, snapshot or
