@@ -169,6 +169,9 @@ class Hub:
         self.plugin = PluginInfo()
         self.activity = ActivityLog()
         self.shutting_down = False
+        # Who started this hub: "app" (the menu bar app, which then owns it), "relay" (an
+        # AI client's relay, when the app could not), or "terminal" (`safelight hub`).
+        self.host = "terminal"
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._queue: deque[str] = deque()
         self._waiters: set[asyncio.Future[None]] = set()
@@ -201,6 +204,7 @@ class Hub:
                 "pid": os.getpid(),
                 "uptime_s": round(now - self.started_at, 1),
                 "shutting_down": self.shutting_down,
+                "host": self.host,
             },
             "plugin": {
                 "connected": self.plugin_connected,
@@ -720,11 +724,23 @@ class _UvicornServer(uvicorn.Server):
 class HubServer:
     """Runs the hub over HTTP on 127.0.0.1 and publishes hub.json once listening."""
 
-    def __init__(self, home: Path, port: int, hub: Hub | None = None) -> None:
+    def __init__(
+        self,
+        home: Path,
+        port: int,
+        hub: Hub | None = None,
+        *,
+        host: str = "terminal",
+        parent_pid: int | None = None,
+    ) -> None:
         self.home = home
         self.requested_port = port
         self.token = secrets.token_urlsafe(32)
         self.hub = hub or Hub(settings_path=home / "settings.json")
+        self.hub.host = host
+        # The app passes its own process id: if the app goes away without stopping the
+        # hub (a crash), the hub notices it has a new parent and stops too.
+        self.parent_pid = parent_pid
         self.port: int | None = None
         config = uvicorn.Config(
             build_app(self.hub, self.token, lifespan=self._lifespan),
@@ -770,6 +786,10 @@ class HubServer:
         LOGGER.info("Safelight hub %s listening on 127.0.0.1:%s", __version__, self.port)
         while True:
             await asyncio.sleep(1)
+            if self.parent_pid is not None and os.getppid() != self.parent_pid:
+                LOGGER.info("Safelight app %s is gone: stopping the hub", self.parent_pid)
+                self.stop()
+                return
             self.hub.maintenance()
 
     def _remove_config(self) -> None:
@@ -779,6 +799,6 @@ class HubServer:
                 path.unlink()
 
 
-def run_hub(home: Path, port: int) -> None:
+def run_hub(home: Path, port: int, host: str = "terminal", parent_pid: int | None = None) -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    asyncio.run(HubServer(home, port).serve())
+    asyncio.run(HubServer(home, port, host=host, parent_pid=parent_pid).serve())

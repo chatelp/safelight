@@ -13,12 +13,17 @@ final class AppModel {
     private(set) var clientStates: [AIClient: ClientConfigState] = [:]
     private(set) var message: String?
     private(set) var busy = false
+    /// The hub stopped right after starting several times: the app waits for the user.
+    private(set) var hubGaveUp = false
     /// What the menu bar shows, with the anti-flicker rules of docs/DESIGN.md applied.
     private(set) var displayedState: SafelightState = .stopped
     private(set) var workingFrame = 1
 
     let api = HubAPI()
     let cli = LocalSetup.cliPath()
+    /// The hub runs as a child of the app while the app is open (nil in previews).
+    private let host: HubHost?
+    private var terminationObserver: NSObjectProtocol?
     private var lastSeq = 0
     private var workingSince: Date?
     private var workingShownAt: Date?
@@ -40,12 +45,20 @@ final class AppModel {
 
     init(preview: (HubStatus?, [ActivityEvent])? = nil) {
         if let preview {
+            host = nil
             status = preview.0
             events = preview.1
             displayedState = SafelightState(status: preview.0)
             for client in AIClient.allCases { clientStates[client] = .notConfigured }
             clientStates[.claudeDesktop] = .configured
             return
+        }
+        let host = HubHost()
+        self.host = host
+        terminationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { host.stop() }
         }
         refreshClientStates()
         pollTask = Task { [weak self] in
@@ -75,7 +88,35 @@ final class AppModel {
             status = nil
             lastError = error.localizedDescription
         }
+        superviseHub()
         updateDisplayedState()
+    }
+
+    /// Keeps the hub running while the app is open, and takes over a hub that a relay
+    /// started on its own (when the app was closed or not answering).
+    private func superviseHub() {
+        guard let host, let cli else { return }
+        switch HubHost.decide(status: status, ownRunning: host.isRunning) {
+        case .none:
+            break
+        case .start:
+            hubGaveUp = host.gaveUp
+            guard !host.gaveUp else { return }
+            do {
+                try host.start(cli: cli)
+            } catch {
+                lastError = "The hub could not start: \(error.localizedDescription)"
+            }
+        case let .replace(pid):
+            LocalSetup.stopHub(pid: pid)
+        }
+    }
+
+    /// What the popover says while no hub answers.
+    var hubProblem: String {
+        if cli == nil { return "Safelight's helper program was not found. Reinstall Safelight." }
+        if hubGaveUp { return "The hub stopped right after starting, several times. Check the hub log, then restart it." }
+        return lastError ?? "Starting the hub…"
     }
 
     /// Working shows only after 300 ms and stays at least 1.2 s, so quick calls don't flicker.
@@ -151,27 +192,16 @@ final class AppModel {
         NSWorkspace.shared.openApplication(at: url, configuration: .init())
     }
 
-    func startHub() {
-        guard let cli else {
-            show("Safelight's helper program was not found. Reinstall Safelight.")
-            return
+    /// Stops the hub and starts a fresh one (the next poll starts it once the old one is gone).
+    func restartHub() {
+        host?.resetFailures()
+        hubGaveUp = false
+        if let host, host.isRunning {
+            host.stop()
+        } else if let pid = status?.hub.pid {
+            LocalSetup.stopHub(pid: pid)
         }
-        do {
-            try LocalSetup.startHub(cli: cli)
-            show("Starting the hub…")
-        } catch {
-            show("The hub could not start: \(error.localizedDescription)")
-        }
-        Task {
-            try? await Task.sleep(for: .seconds(1))
-            await refresh()
-        }
-    }
-
-    func stopHub() {
-        if LocalSetup.stopHub() {
-            show("Hub stopped. AI clients start it again when they need it.")
-        }
+        show("Restarting the hub…")
         Task {
             try? await Task.sleep(for: .seconds(1))
             await refresh()

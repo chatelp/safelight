@@ -1,13 +1,14 @@
 # Safelight menu bar app
 
-Native macOS app (SwiftUI `MenuBarExtra`, macOS 14 or later) that shows whether
-Safelight is running and connected to Lightroom Classic, which AI clients use it,
+Native macOS app (SwiftUI `MenuBarExtra`, macOS 14 or later). While it is open it runs
+the Safelight hub as its own child process; AI clients open it when they need the hub.
+It shows whether Safelight is connected to Lightroom Classic, which AI clients use it,
 what they did recently, and lets the user change settings and set things up.
 
 | Path | Contents |
 |---|---|
 | `Package.swift` | Swift package: `SafelightCore` (logic, tested) and `Safelight` (the app) |
-| `Sources/SafelightCore/` | Hub API client and models, activity wording, AI client configuration, hub start/stop, plugin install |
+| `Sources/SafelightCore/` | Hub API client and models, activity wording, AI client configuration, running the hub (`HubHost`), plugin install |
 | `Sources/Safelight/` | `SafelightApp` (menu bar entry), `AppModel` (state, polling, actions), `StatusView` (popover) |
 | `Tests/SafelightCoreTests/` | Swift Testing tests |
 | `Design/` | Icons, menu bar template images, colors (see [docs/DESIGN.md](../docs/DESIGN.md)) |
@@ -19,6 +20,10 @@ swift test --package-path app      # tests
 ./scripts/build_app.sh             # builds build/Safelight.app
 open build/Safelight.app
 ```
+
+Opening the app once registers it with macOS, so relays can then open it by its bundle
+id (`open -g -b io.github.chatelp.safelight`). `SAFELIGHT_OPEN_APP=0` stops a relay from
+opening it; relays never open it when `SAFELIGHT_HOME` points elsewhere (tests).
 
 `build_app.sh` compiles the asset catalog with `actool`, bundles the Lightroom plugin,
 and points the app at this checkout's `.venv/bin/safelight` for starting the hub.
@@ -37,9 +42,13 @@ It draws the popover with sample data in light and dark appearance. Native contr
 
 - **Menu bar icon**: hub stopped, waiting for Lightroom, connected, or working (animated,
   shown only after 300 ms and for at least 1.2 s; no animation with Reduce Motion).
+- **Hub**: started with `safelight hub --host app --parent-pid <app>` when the app opens,
+  started again if it stops (after three failed starts in a row the app waits for
+  Restart Hub), stopped when the app quits. A hub an AI client's relay started on its own
+  (app closed or not installed) is replaced by the app's once it has no job running.
 - **Popover**: Lightroom version and catalog, AI clients seen in the last 15 minutes,
   the last activity in plain words, read-only mode, confirmation threshold, launch at
-  login, start/stop hub, hub log.
+  login, restart hub, hub log.
 - **Set Up menu**: registers Safelight with Claude Desktop, Claude Code, Cursor and
   Codex (each configuration file is backed up first), and installs the Lightroom plugin
   into Lightroom's Modules folder.

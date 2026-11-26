@@ -141,3 +141,35 @@ private func temporaryHome() throws -> URL {
     #expect(ActivityText.clientName("Something Else") == "Something Else")
     #expect(ActivityText.clientName(nil) == nil)
 }
+
+@MainActor
+@Test func appStartsTheHubAndTakesOverARelayHub() throws {
+    var status = try decode(HubStatus.self, statusJSON)
+    #expect(status.hub.host == nil)  // a hub from before 0.2: left alone
+    #expect(HubHost.decide(status: nil, ownRunning: false) == .start)
+    #expect(HubHost.decide(status: nil, ownRunning: true) == .none)  // ours is starting
+    #expect(HubHost.decide(status: status, ownRunning: false) == .none)
+    status.hub.host = "terminal"
+    #expect(HubHost.decide(status: status, ownRunning: false) == .none)
+    status.hub.host = "relay"
+    #expect(HubHost.decide(status: status, ownRunning: false) == .replace(pid: 42))
+    status.jobs.running = 1  // never in the middle of work
+    #expect(HubHost.decide(status: status, ownRunning: false) == .none)
+    status.jobs.running = 0
+    status.hub.shuttingDown = true
+    #expect(HubHost.decide(status: status, ownRunning: false) == .none)
+}
+
+@MainActor
+@Test func hubThatKeepsStoppingIsNotRestartedForever() async throws {
+    let host = HubHost()
+    // `false` exits at once, like a hub that cannot start.
+    for _ in 0..<HubHost.maxQuickExits {
+        try host.start(cli: "/usr/bin/false")
+        while host.isRunning { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(100))  // the exit is recorded on the main actor
+    }
+    #expect(host.gaveUp)
+    host.resetFailures()
+    #expect(!host.gaveUp)
+}

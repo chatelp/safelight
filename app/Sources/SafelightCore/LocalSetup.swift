@@ -1,6 +1,6 @@
 import Foundation
 
-/// Finding the `safelight` program, starting and stopping the hub, installing the plugin.
+/// Finding the `safelight` program, stopping a hub, installing the plugin.
 public enum LocalSetup {
     /// The `safelight` command line program, in order of preference:
     /// 1. `SAFELIGHT_CLI` in the environment (development);
@@ -25,28 +25,10 @@ public enum LocalSetup {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    /// Starts `safelight hub` in the background. It keeps running when the app quits.
-    public static func startHub(cli: String) throws {
-        try FileManager.default.createDirectory(at: SafelightPaths.home, withIntermediateDirectories: true)
-        if !FileManager.default.fileExists(atPath: SafelightPaths.hubLog.path) {
-            FileManager.default.createFile(atPath: SafelightPaths.hubLog.path, contents: nil)
-        }
-        let log = try FileHandle(forWritingTo: SafelightPaths.hubLog)
-        log.seekToEndOfFile()
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: cli)
-        process.arguments = ["hub"]
-        process.standardOutput = log
-        process.standardError = log
-        process.standardInput = FileHandle.nullDevice
-        try process.run()
-    }
-
-    /// Asks the running hub to stop (SIGTERM); it removes hub.json on its way out.
+    /// Asks a hub this app did not start to stop (SIGTERM); it removes hub.json on its way out.
     @discardableResult
-    public static func stopHub() -> Bool {
-        guard let pid = HubConfig.read()?.pid, pid > 0 else { return false }
-        return kill(pid_t(pid), SIGTERM) == 0
+    public static func stopHub(pid: Int) -> Bool {
+        pid > 0 && kill(pid_t(pid), SIGTERM) == 0
     }
 
     // MARK: Lightroom plugin

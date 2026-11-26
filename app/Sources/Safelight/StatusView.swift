@@ -71,7 +71,7 @@ struct StatusView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text(model.lastError ?? "The hub is not running. AI clients start it when they need it, or start it here.")
+                Text(model.hubProblem)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -177,10 +177,8 @@ struct StatusView: View {
             if model.state == .waiting {
                 MenuButton("Open Lightroom Classic", systemImage: "photo.stack") { model.openLightroom() }
             }
-            if model.status == nil {
-                MenuButton("Start Hub", systemImage: "play.circle") { model.startHub() }
-            } else {
-                MenuButton("Stop Hub", systemImage: "stop.circle") { model.stopHub() }
+            if model.status != nil || model.hubGaveUp {
+                MenuButton("Restart Hub", systemImage: "arrow.clockwise.circle") { model.restartHub() }
             }
             Menu {
                 ForEach(AIClient.allCases) { client in
