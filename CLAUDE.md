@@ -32,6 +32,8 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md). This file holds what those don't: how
 - The catalog is the maintainer's real one. Read freely (searches, previews). Write only
   on test photos: virtual copies named "Safelight Test …" in the "Safelight Tests"
   collection, unless the maintainer says otherwise. Never overwrite their corrections.
+- After reloading the plugin, `uv run python scripts/check_photo_fields.py` checks the
+  photo fields and the Validated guard on a test copy, and puts it back as it was.
 - `uv run safelight call <command> '<json>'` runs one plugin command through the hub;
   `uv run safelight status` shows the hub and Lightroom.
 - The menu bar app hosts the hub: after changing hub code, restart the app (or Restart
