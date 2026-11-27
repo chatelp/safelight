@@ -113,21 +113,29 @@ struct PreferencesView: View {
             set: { names = $0 }
         )
         return section("Collections in Lightroom", systemImage: "rectangle.stack") {
-            note("Safelight keeps these smart collections in Lightroom's Collections panel, filled from its fields. Leave a name empty for a collection you do not want.")
+            note("Safelight keeps these smart collections in Lightroom's Collections panel, filled from its fields. With an empty name, Safelight does not create that collection; one it made before stays until you delete it in Lightroom.")
             nameRow("Collection set", text: draft.set)
             nameRow("To check", text: draft.toCheck)
             nameRow("To straighten by hand", text: draft.byHand)
             nameRow("Validated", text: draft.validated)
             HStack {
                 Spacer()
-                Button("Rename") {
+                Button("Save Names") {
                     model.setCollections(draft.wrappedValue)
                     names = nil
                 }
-                .disabled(names == nil || names == settings.collections
-                    || draft.wrappedValue.set.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(names == nil || names == settings.collections || !Self.valid(draft.wrappedValue))
             }
         }
+    }
+
+    /// What the hub accepts: a set name, names of at most 60 characters, no two the same.
+    static func valid(_ names: HubSettings.Collections) -> Bool {
+        let trim = { (name: String) in name.trimmingCharacters(in: .whitespaces) }
+        let all = [names.set, names.toCheck, names.byHand, names.validated].map(trim)
+        let collections = all.dropFirst().filter { !$0.isEmpty }
+        return !all[0].isEmpty && all.allSatisfy { $0.count <= 60 }
+            && Set(collections).count == collections.count
     }
 
     private func nameRow(_ title: String, text: Binding<String>) -> some View {

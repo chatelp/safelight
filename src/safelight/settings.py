@@ -26,6 +26,8 @@ DEFAULT_COLLECTIONS = {
     "validated": "Validated",
 }
 MAX_COLLECTION_NAME = 60
+# The only color Safelight gave photos before it recorded its colors in the catalog.
+LEGACY_LABEL = "purple"
 MAX_LENS_NAMES = 50
 MAX_NAME_LENGTH = 120
 
@@ -138,6 +140,9 @@ def _collections(value: Any, current: dict[str, str]) -> dict[str, str]:
         if key == "set" and not name.strip():
             raise ValueError("the collection set needs a name")
         out[key] = name.strip()
+    names = [out[key] for key in ("to_check", "by_hand", "validated") if out[key]]
+    if len(names) != len(set(names)):
+        raise ValueError("each collection needs its own name")
     return out
 
 

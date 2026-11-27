@@ -235,6 +235,7 @@ def test_settings_validation_and_persistence(tmp_path):
         {"collections": {"set": ""}},
         {"collections": {"other": "X"}},
         {"collections": {"to_check": "x" * 61}},
+        {"collections": {"by_hand": "À vérifier"}},  # two collections, one name
         {"snapshots": 1},
         {"lens_names": [{"lightroom": "A"}]},
         {"lens_names": [{"lightroom": "A", "real": "B"}, {"lightroom": "A", "real": "C"}]},

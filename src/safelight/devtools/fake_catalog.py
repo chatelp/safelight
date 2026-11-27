@@ -469,15 +469,24 @@ class FakeCatalog:
         }
 
     async def tidy(self, params: dict[str, Any], _: Progress) -> Any:
-        """Like the plugin: validated photos lose the color Safelight gave them."""
+        """Like the plugin: validated photos lose the color Safelight gave them, and a
+        record of a color the user changed since is forgotten."""
         changed = []
+        legacy = params["legacy_label"]
         for photo in self.photos.values():
-            if photo["validated"] and photo.get("safelight_label"):
-                if photo["label"] == photo["safelight_label"]:
-                    label = params["validated_label"]
-                    photo["label"] = None if label == "none" else label
-                    changed.append(photo["uuid"])
+            mine = photo.get("safelight_label")
+            if mine == "user":
+                continue  # the user's color
+            if mine and photo["label"] != mine:
+                photo["safelight_label"] = "user"
+                continue
+            if not mine and photo["geometry_by"] in ("safelight", "by_hand"):
+                mine = legacy if photo["label"] == legacy else None
+            if mine and photo["validated"]:
+                label = params["validated_label"]
+                photo["label"] = None if label == "none" else label
                 photo["safelight_label"] = None
+                changed.append(photo["uuid"])
         validated = [
             u for u in params.get("check") or [] if self.photos.get(u, {}).get("validated")
         ]
@@ -485,8 +494,10 @@ class FakeCatalog:
 
     async def safelight_collections(self, params: dict[str, Any], _: Progress) -> Any:
         """Like the plugin: Safelight's collection set and smart collections, by name."""
+        changed = self.safelight_set != {"set": params["set"], **params["names"]}
         self.safelight_set = {"set": params["set"], **params["names"]}
-        return {"set": 100, **{key: 101 + i for i, key in enumerate(params["names"])}}
+        ids = {"set": 100, **{key: 101 + i for i, key in enumerate(params["names"])}}
+        return {"changed": changed, "ids": ids}
 
     async def collections_delete(self, params: dict[str, Any], _: Progress) -> Any:
         found = [c for c in self.collections if c["id"] == params.get("collection_id")]

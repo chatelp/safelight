@@ -27,7 +27,7 @@ from .contact_sheet import SheetPhoto, render
 from .hub_client import HubClient, HubUnavailable
 from .protocol import JobState
 from .search import PhotoFilters, build_search, has_post_filters, matches_post_filters
-from .settings import Settings
+from .settings import LEGACY_LABEL, Settings
 from .upright import (
     DISAGREE_DEG,
     RESET_SETTINGS,
@@ -94,11 +94,8 @@ def safelight_color(photo: dict[str, Any], preferences: Settings) -> bool:
         return True
     if photo.get("safelight_label"):
         return label == photo["safelight_label"]
-    # Photos marked before Safelight recorded its colors: its own colors on its own photos.
-    return photo.get("geometry_by") in ("safelight", "by_hand") and label in (
-        preferences.change_label,
-        preferences.by_hand_label,
-    )
+    # Photos marked before Safelight recorded its colors: it only ever gave them purple.
+    return photo.get("geometry_by") in ("safelight", "by_hand") and label == LEGACY_LABEL
 
 
 def label_fields(
@@ -108,7 +105,10 @@ def label_fields(
     what its label is then; no fields when its color is the user's or already right."""
     label = photo.get("label")
     if not safelight_color(photo, preferences):
-        return {}, f"kept {label}"
+        # The color is the user's: record it, so it is never taken for Safelight's.
+        record = photo.get("safelight_label")
+        stale = {"safelight_label": "user"} if record != "user" else {}
+        return stale, f"kept {label}"
     if color == "none":
         if label is None:
             return {}, "none"

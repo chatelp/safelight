@@ -77,7 +77,8 @@ A small local daemon, one per user session:
   collections ("To check", "To straighten by hand", "Validated", in a "Safelight" set,
   filled by Lightroom from Safelight's fields), and every half minute takes Safelight's
   color off the photos the user validated, and those photos off the list of photos to
-  check.
+  check. Whoever hosts the hub does this: the app, or a relay when the app is not
+  installed.
 
 #### Jobs
 
@@ -170,8 +171,8 @@ The plugin also gives each photo three **Safelight fields**, kept in the catalog
 shown in the Metadata panel (`MetadataDefinition.lua`, "Safelight" set): *Validated*
 (the user approves the photo's edits), *Geometry* (straightened by Safelight,
 corrected by the user, or to straighten by hand after Safelight put it back) and *Reject reason*, plus a hidden one,
-the color label Safelight gave the photo, so that Safelight only ever changes its own
-colors and never the user's. They are facts about one photo that every AI client must
+the color label Safelight gave the photo (or that the user changed it since), so that
+Safelight only ever changes its own colors and never the user's. They are facts about one photo that every AI client must
 respect: the plugin's router takes validated photos out of every
 command that changes edits, whatever the client asked. Adding or changing a field
 needs a new `schemaVersion`; Lightroom then asks once to update the catalog.

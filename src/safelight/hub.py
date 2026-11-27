@@ -57,7 +57,7 @@ from .protocol import (
     ErrorCode,
     JobState,
 )
-from .settings import Settings
+from .settings import LEGACY_LABEL, Settings
 
 LOGGER = logging.getLogger("safelight.hub")
 
@@ -255,6 +255,7 @@ class Hub:
         # Safelight's own upkeep in the catalog (see `_upkeep`).
         self._upkeep_task: asyncio.Task[None] | None = None
         self._collections_for: tuple[str | None, str] | None = None
+        self._next_collections = 0.0
         self._next_tidy = 0.0
         self._app_seen: float | None = None
         # Photos waiting for the user's eye, shown in the app (see `add_review`).
@@ -684,6 +685,8 @@ class Hub:
         """Release held plugin polls at once so the server can stop without waiting for them."""
         self.shutting_down = True
         self._wake_pollers()
+        if self._upkeep_task is not None:
+            self._upkeep_task.cancel()
 
     # -- housekeeping ---------------------------------------------------------------------
 
@@ -736,39 +739,51 @@ class Hub:
         Lightroom session or change), and every half minute takes Safelight's color off
         the photos the user validated, and those photos off the list of photos to check."""
         wanted = (self.plugin.session_id, json.dumps(self.settings.collections, sort_keys=True))
-        if wanted != self._collections_for:
+        if wanted != self._collections_for and now >= self._next_collections:
             names = dict(self.settings.collections)
             params = {"set": names.pop("set"), "names": names}
             outcome = await self._internal("safelight.collections", params)
-            self._collections_for = wanted  # failed too: tried again on the next change
-            if outcome["state"] != JobState.SUCCEEDED:
+            if outcome is None:
+                return
+            if outcome["state"] == JobState.SUCCEEDED:
+                self._collections_for = wanted
+            else:  # an older plugin, or Lightroom busy: tried again later
+                self._next_collections = now + UPKEEP_BACKOFF_S
                 LOGGER.warning("Safelight's collections: %s", outcome.get("error"))
         if now < self._next_tidy:
             return
         params = {
             "validated_label": self.settings.validated_label,
+            "legacy_label": LEGACY_LABEL,
             "check": [entry["id"] for entry in self.review],
         }
         outcome = await self._internal("safelight.tidy", params)
+        if outcome is None:
+            return
         if outcome["state"] != JobState.SUCCEEDED:
             self._next_tidy = now + UPKEEP_BACKOFF_S  # an older plugin, or Lightroom busy
+            LOGGER.warning("Safelight's colors of validated photos: %s", outcome.get("error"))
             return
         self._next_tidy = now + UPKEEP_EVERY_S
         result = outcome.get("result") or {}
         changed = result.get("changed") or []
         if changed:
+            count = len(changed)
             self.activity.add(
                 kind="job",
                 client=HUB_CLIENT,
                 command="safelight.tidy",
                 state=JobState.SUCCEEDED,
-                affected=len(changed),
-                detail=f"{len(changed)} validated photos lost Safelight's color",
+                affected=count,
+                detail=f"{count} validated photo{'s' if count > 1 else ''} lost Safelight's color",
             )
         if result.get("validated"):
             self.review_done(list(result["validated"]))
 
-    async def _internal(self, command: str, params: dict[str, Any]) -> dict[str, Any]:
+    async def _internal(self, command: str, params: dict[str, Any]) -> dict[str, Any] | None:
+        """Runs one upkeep command; None when it must not run now (read-only, stopping)."""
+        if self.settings.read_only or self.shutting_down or not self.plugin_connected:
+            return None
         job = self.submit(command, params, client=HUB_CLIENT, internal=True)
         return await self.wait(job, DEFAULT_WAIT_S)
 

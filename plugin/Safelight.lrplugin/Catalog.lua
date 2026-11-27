@@ -268,6 +268,9 @@ local SMART = {
     end,
 }
 
+-- Bump when SMART changes, so that existing collections get the new rules.
+local SMART_VERSION = 1
+
 local function existing(id, wantSet)
     if not id then
         return nil
@@ -290,38 +293,48 @@ function Catalog.safelightCollections(params)
     local prefs = LrPrefs.prefsForPlugin()
     local all = prefs.collections or {}
     local known = all[catalog:getPath()] or {}
-    local ids = {}
     local set = existing(known.set, true) -- looked up before the write gate
-    local found = {}
+    local found, wanted = {}, {}
+    local rulesChanged = known.version ~= SMART_VERSION
+    local work = not set or set:getName() ~= params.set
     for key, _ in pairs(SMART) do
-        found[key] = existing(known[key], false)
-    end
-    Batch.writeOnce("Safelight: Collections", function()
-        if not set then
-            set = catalog:createCollectionSet(params.set, nil, true)
-        elseif set:getName() ~= params.set then
-            set:setName(params.set)
+        local name = params.names[key]
+        if type(name) == "string" and name ~= "" then
+            wanted[key] = name
+            found[key] = existing(known[key], false)
+            work = work or not found[key] or found[key]:getName() ~= name or rulesChanged
         end
-        ids.set = set.localIdentifier
-        for key, search in pairs(SMART) do
-            local name = params.names[key]
-            if type(name) == "string" and name ~= "" then
+    end
+    if work then
+        Batch.writeOnce("Safelight: Collections", function()
+            if not set then
+                set = catalog:createCollectionSet(params.set, nil, true)
+            elseif set:getName() ~= params.set then
+                set:setName(params.set)
+            end
+            for key, name in pairs(wanted) do
                 local collection = found[key]
                 if not collection then
-                    collection = catalog:createSmartCollection(name, search(), set, true)
+                    found[key] = catalog:createSmartCollection(name, SMART[key](), set, true)
                 else
                     if collection:getName() ~= name then
                         collection:setName(name)
                     end
-                    collection:setSearchDescription(search())
+                    if rulesChanged then
+                        collection:setSearchDescription(SMART[key]())
+                    end
                 end
-                ids[key] = collection.localIdentifier
             end
-        end
-    end)
+        end)
+    end
+    -- New items have their ids once the write gate is over.
+    local ids = { set = set and set.localIdentifier, version = SMART_VERSION }
+    for key, _ in pairs(wanted) do
+        ids[key] = found[key] and found[key].localIdentifier
+    end
     all[catalog:getPath()] = ids
     prefs.collections = all
-    return ids
+    return { changed = work, ids = ids }
 end
 
 local function changeMembership(params, job, add)

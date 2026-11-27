@@ -16,6 +16,8 @@ public enum ActivityText {
         "collections.add": "Added photos to a collection",
         "collections.remove_photos": "Removed photos from a collection",
         "collections.delete": "Deleted a collection",
+        "safelight.collections": "Updated Safelight's collections",
+        "safelight.tidy": "Took Safelight's color off validated photos",
         "metadata.set": "Changed metadata",
         "keywords.list": "Listed keywords",
         "keywords.add": "Added keywords",
@@ -43,6 +45,7 @@ public enum ActivityText {
     /// MCP clients introduce themselves with technical names; show the product name.
     static let clientNames: [String: String] = [
         "claude-ai": "Claude Desktop",
+        "safelight": "Safelight",
         "claude-code": "Claude Code",
         "cursor-vscode": "Cursor",
         "cursor": "Cursor",
