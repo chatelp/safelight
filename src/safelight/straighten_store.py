@@ -25,7 +25,7 @@ from PIL import Image, ImageDraw
 
 from .contact_sheet import _font
 from .paths import safelight_home
-from .upright import ANALYSIS_PX, Line, Plan
+from .upright import ANALYSIS_PX, Line, Plan, geometry_settings
 
 # Settings that move the lines of the image before Upright: if they change, the lines kept
 # no longer match the photo.
@@ -63,6 +63,9 @@ class Saved:
     auto_guide_lines: list[int]  # the guides of the automatic run
     auto_matrix: list[float]
     jpeg: bytes
+    # The transform, Upright and crop before Safelight's first correction (None for photos
+    # straightened by an older Safelight), to put the photo back as it was.
+    before: dict[str, Any] | None = None
 
     def lens_changed(self, settings: dict[str, Any]) -> bool:
         return any(settings.get(key) != self.lens.get(key) for key in LENS_KEYS)
@@ -124,6 +127,7 @@ def save(
             "lens": {key: settings.get(key) for key in LENS_KEYS},
             "auto_guide_lines": plan.guide_lines,
             "auto_matrix": matrix,
+            "before": geometry_settings(settings),
         }
     data_path.write_text(json.dumps(data))
 
@@ -158,6 +162,7 @@ def load(photo_id: str, home: Path | None = None) -> Saved | None:
         auto_guide_lines=list(data["auto_guide_lines"]),
         auto_matrix=list(data["auto_matrix"]),
         jpeg=jpeg,
+        before=dict(data["before"]) if isinstance(data.get("before"), dict) else None,
     )
 
 

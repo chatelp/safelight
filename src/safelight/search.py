@@ -62,8 +62,10 @@ class PhotoFilters(BaseModel):
         default=None,
         description="True: photos the user validated (Safelight never changes their edits)",
     )
-    geometry_by: Literal["safelight", "user"] | None = Field(
-        default=None, description="Who last corrected the perspective, per Safelight's field"
+    geometry_by: Literal["safelight", "user", "by_hand"] | None = Field(
+        default=None,
+        description="Safelight's Geometry field: straightened by Safelight, corrected by the "
+        "user, or to straighten by hand (Safelight put it back)",
     )
     shutter_max_s: float | None = Field(default=None, ge=0, description="Exposure time in seconds")
 

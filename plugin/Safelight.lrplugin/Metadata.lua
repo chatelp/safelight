@@ -37,7 +37,7 @@ local FIELDS = {
     validated = { plugin = "validated", valid = function(v) return type(v) == "boolean" end,
         convert = function(v) return v and "yes" or nil end },
     geometry_by = { plugin = "geometry", valid = function(v)
-        return v == "safelight" or v == "user" or v == "none"
+        return v == "safelight" or v == "user" or v == "by_hand" or v == "none"
     end, convert = function(v) return v ~= "none" and v or nil end },
     reject_reason = { plugin = "rejectReason", valid = isString,
         convert = function(v) return v ~= "" and v or nil end },

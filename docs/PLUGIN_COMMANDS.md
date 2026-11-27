@@ -62,7 +62,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 
 | Command | Policy | Params | Answer |
 |---|---|---|---|
-| `metadata.set` | M | photos, `fields`: `rating` (0–5), `pick` (−1, 0, 1), `label` (`red`…`purple`, `none`), `title`, `caption`, `headline`, `copyright`, `creator`, `location`, `city`, `state`, `country`, `country_code`, `event`, `alt_text`, `extended_description`, `gps` (`{latitude, longitude}` or `false`), `gps_altitude`; Safelight's fields `validated` (true/false), `geometry_by` (`safelight`, `user`, `none`), `reject_reason` (`""` clears it) | batch result |
+| `metadata.set` | M | photos, `fields`: `rating` (0–5), `pick` (−1, 0, 1), `label` (`red`…`purple`, `none`), `title`, `caption`, `headline`, `copyright`, `creator`, `location`, `city`, `state`, `country`, `country_code`, `event`, `alt_text`, `extended_description`, `gps` (`{latitude, longitude}` or `false`), `gps_altitude`; Safelight's fields `validated` (true/false), `geometry_by` (`safelight`, `user`, `by_hand`, `none`), `reject_reason` (`""` clears it) | batch result |
 | `keywords.list` | R | `query`, `limit` | keyword paths (`A > B > C`) |
 | `keywords.add` | M | photos, `keywords` (paths; missing ones are created) | batch result, `keywords_not_created` |
 | `keywords.remove` | M | photos, `keywords` (a name matches anywhere, a path exactly) | batch result, `keywords_not_found` |

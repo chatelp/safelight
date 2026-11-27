@@ -31,6 +31,10 @@ folder "{folder}", the way the user expects.
      correction turns it wrongly: leave it to the user;
    - call straighten_photos again with chosen_lines. For photos listed in left_to_user,
      tell the user: they draw the guides in Lightroom (Transform panel, Guided).
+   - a photo Safelight made worse and no choice of lines can fix: put it back with
+     undo_straighten, never by changing its transform yourself. It gets back its settings
+     from before, its Geometry field says "To straighten by hand" (so Safelight leaves it
+     alone next time) and it goes to the app's list of photos to check.
 7. Thin white or black borders on HDR merges come from merging without Lightroom's Auto
    Crop. Do not crop them unless the user asks.
 8. Report how many photos were straightened, which ones need the user's eye, and that
