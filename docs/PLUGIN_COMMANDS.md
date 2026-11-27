@@ -10,7 +10,14 @@ development you can run any of them with `uv run safelight call <command> '<json
   work on photos take one of:
   - `"uuids": ["…", "…"]` — those photos; unknown ids are listed in `missing`;
   - `"target": "active"` — the active photo;
-  - nothing — the photos selected in Lightroom.
+  - `"target": "selected"` — the photos selected in Lightroom.
+
+  Nothing, an empty `uuids` or both at once is refused: the plugin never guesses which
+  photos are meant.
+- **Parameters are declared** in `plugin/Safelight.lrplugin/commands.json`: the router
+  refuses any other parameter (`BAD_REQUEST`, with the accepted names), and so does the
+  fake catalog, which reads the same file. Tests check that every registered command is
+  declared and that every `params.<name>` a handler reads is listed.
 - **Dry run.** Commands that change photos accept `"dry_run": true` and only answer
   `{affected, summary}`. The hub uses this before asking the user to confirm a large
   change (see `src/safelight/policy.py`).

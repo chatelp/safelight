@@ -2,12 +2,15 @@
 -- Commands are named <area>.<action>. Commands that change photos accept dry_run = true,
 -- which only reports how many photos would change; the hub uses it before asking the
 -- user to confirm large changes (see src/safelight/policy.py).
+local LrFileUtils = import "LrFileUtils"
+local LrPathUtils = import "LrPathUtils"
 local LrTasks = import "LrTasks"
 
 local Catalog = require "Catalog"
 local Develop = require "Develop"
 local Export = require "Export"
 local Inspect = require "Inspect"
+local JSON = require "JSON"
 local Masks = require "Masks"
 local Metadata = require "Metadata"
 local Photos = require "Photos"
@@ -197,6 +200,73 @@ local function runGuarded(handler, command, params, job)
     return result
 end
 
+-- The parameters each command accepts, from commands.json (shared with the fake catalog).
+-- A wrong name is refused instead of being ignored: ignoring it once made a command answer
+-- for the active photo instead of the photo asked for.
+local DECLARED = (function()
+    local ok, decoded = pcall(function()
+        return JSON.decode(LrFileUtils.readFile(LrPathUtils.child(_PLUGIN.path, "commands.json")))
+    end)
+    if ok and type(decoded) == "table" and type(decoded.commands) == "table" then
+        return decoded
+    end
+    Logger.error("Cannot read commands.json: " .. tostring(decoded))
+    return nil
+end)()
+
+-- Returns why the params do not fit the command, or nil when they do.
+local function checkParams(command, params)
+    if not DECLARED then
+        return "Safelight's plugin cannot read its commands.json: reinstall the plugin"
+    end
+    local spec = DECLARED.commands[command]
+    if type(spec) ~= "table" then
+        return "No parameters are declared for " .. command .. " in commands.json"
+    end
+    local known = {}
+    for _, name in ipairs(DECLARED.common or {}) do
+        known[name] = true
+    end
+    for _, name in ipairs(spec.params or {}) do
+        known[name] = true
+    end
+    if spec.photos then
+        known.uuids = true
+        known.target = true
+    end
+    local unknown = {}
+    for key, _ in pairs(params) do
+        if not known[key] then
+            unknown[#unknown + 1] = tostring(key)
+        end
+    end
+    if #unknown > 0 then
+        local accepted = {}
+        for name, _ in pairs(known) do
+            accepted[#accepted + 1] = name
+        end
+        table.sort(unknown)
+        table.sort(accepted)
+        return "Unknown parameter for " .. command .. ": " .. table.concat(unknown, ", ")
+            .. " (accepted: " .. table.concat(accepted, ", ") .. ")"
+    end
+    if spec.photos then
+        local ids = type(params.uuids) == "table" and #params.uuids > 0
+        if params.uuids ~= nil and params.target ~= nil then
+            return command .. ": give photo ids (uuids) or a target, not both"
+        end
+        if not ids and params.target ~= "selected" and params.target ~= "active" then
+            local problem = command .. ' needs photos: photo ids (uuids), or target "selected" or "active"'
+            if next(params) == nil then
+                problem = problem .. ". An AI app started before a Safelight update may send"
+                    .. " this: restart it"
+            end
+            return problem
+        end
+    end
+    return nil
+end
+
 -- Runs one command and always returns a response table for the hub.
 function CommandRouter.dispatch(request, job)
     job = job or noJob
@@ -219,7 +289,17 @@ function CommandRouter.dispatch(request, job)
         }
     end
 
-    local ok, result = LrTasks.pcall(runGuarded, handler, command, request.params or {}, job)
+    local params = type(request.params) == "table" and request.params or {}
+    local problem = checkParams(command, params)
+    if problem then
+        return {
+            id = requestId,
+            success = false,
+            error = { code = "BAD_REQUEST", message = problem },
+        }
+    end
+
+    local ok, result = LrTasks.pcall(runGuarded, handler, command, params, job)
     if not ok then
         Logger.error("Command failed: " .. command .. " -> " .. tostring(result))
         return {

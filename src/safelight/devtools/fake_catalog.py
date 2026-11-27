@@ -9,12 +9,59 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+from functools import cache
+from pathlib import Path
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter
 
 from ..policy import EDITING_COMMANDS, VALIDATED_ERROR
 from .fake_plugin import CommandError, Handler, Progress
+
+# The parameters each plugin command accepts, shared with the plugin's router.
+COMMANDS_JSON = Path(__file__).resolve().parents[3] / "plugin/Safelight.lrplugin/commands.json"
+
+
+@cache
+def declared_commands() -> dict[str, Any] | None:
+    """The plugin's commands.json, or None outside a checkout of the repository."""
+    try:
+        return json.loads(COMMANDS_JSON.read_text(encoding="utf-8"))
+    except OSError:
+        return None
+
+
+def check_params(command: str, params: dict[str, Any]) -> str | None:
+    """Why the params do not fit the command, like the plugin's router; None when they do."""
+    declared = declared_commands()
+    if declared is None:
+        return None
+    spec = declared["commands"].get(command)
+    if spec is None:
+        return f"No parameters are declared for {command} in commands.json"
+    known = {*declared.get("common", []), *spec.get("params", [])}
+    if spec.get("photos"):
+        known |= {"uuids", "target"}
+    present = {key for key, value in params.items() if value is not None}  # JSON null: absent
+    unknown = sorted(present - known)
+    if unknown:
+        return (
+            f"Unknown parameter for {command}: {', '.join(unknown)} "
+            f"(accepted: {', '.join(sorted(known))})"
+        )
+    if spec.get("photos"):
+        uuids, target = params.get("uuids"), params.get("target")
+        ids = isinstance(uuids, list) and len(uuids) > 0
+        if uuids is not None and target is not None:
+            return f"{command}: give photo ids (uuids) or a target, not both"
+        if not ids and target not in ("selected", "active"):
+            problem = f'{command} needs photos: photo ids (uuids), or target "selected" or "active"'
+            if not present:
+                problem += ". An AI app started before a Safelight update may send this: restart it"
+            return problem
+    return None
+
 
 # Photos 2 and 3 are a burst: 1 s apart, same scene (3 is the sharper frame).
 CAPTURE_TIMES = [
@@ -74,6 +121,8 @@ class FakeCatalog:
             if missing:
                 raise CommandError("COMMAND_FAILED", f"No photo found with these ids: {missing}")
             return [self.photos[u] for u in params["uuids"]]
+        if params.get("target") not in ("selected", "active"):
+            raise CommandError("COMMAND_FAILED", "Say which photos: uuids, or a target.")
         ids = self.selected[:1] if params.get("target") == "active" else self.selected
         if not ids:
             raise CommandError("COMMAND_FAILED", "No photo selected in Lightroom.")
@@ -421,9 +470,23 @@ class FakeCatalog:
 
     def handlers(self) -> dict[str, Handler]:
         return {
-            name: self._without_validated(handler) if name in EDITING_COMMANDS else handler
+            name: self._checked(
+                name, self._without_validated(handler) if name in EDITING_COMMANDS else handler
+            )
             for name, handler in self._handlers().items()
         }
+
+    @staticmethod
+    def _checked(name: str, handler: Handler) -> Handler:
+        """Like the plugin's router: parameters not declared in commands.json are refused."""
+
+        async def checked(params: dict[str, Any], progress: Progress) -> Any:
+            problem = check_params(name, params)
+            if problem:
+                raise CommandError("BAD_REQUEST", problem)
+            return await handler(params, progress)
+
+        return checked
 
     def _without_validated(self, handler: Handler) -> Handler:
         """Like the plugin's router: validated photos are taken out of edits."""
@@ -433,8 +496,10 @@ class FakeCatalog:
                 ids = [u for u in params["uuids"]]
             elif params.get("target") == "active":
                 ids = self.selected[:1]
-            else:
+            elif params.get("target") == "selected":
                 ids = list(self.selected)
+            else:
+                return await handler(params, progress)  # the handler refuses it
             validated = [u for u in ids if self.photos.get(u, {}).get("validated")]
             if not validated:
                 return await handler(params, progress)

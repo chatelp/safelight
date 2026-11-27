@@ -211,7 +211,7 @@ def _supports_elicitation(ctx: Context | None) -> bool:
 def _targets(photo_ids: list[str] | None, scope: str) -> dict[str, Any]:
     if photo_ids:
         return {"uuids": list(photo_ids)}
-    return {"target": "active"} if scope == "active" else {}
+    return {"target": "active" if scope == "active" else "selected"}
 
 
 def _single(photo_id: str | None) -> dict[str, Any]:

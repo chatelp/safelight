@@ -45,7 +45,9 @@ are in [CONTRIBUTING.md](CONTRIBUTING.md). This file holds what those don't: how
 - Never commit the Lightroom Classic SDK (`vendor/` is git-ignored: Adobe's license).
 - The MCP server uses MCP SDK 2.x (`mcp.server.mcpserver.MCPServer`); tool results are
   pydantic models (TypedDict breaks on Python 3.11).
-- Every plugin command must have a policy in `policy.py` (a test checks it). Commands
+- Every plugin command must have a policy in `policy.py` and its parameters in
+  `plugin/Safelight.lrplugin/commands.json` (tests check both). The plugin refuses an
+  undeclared parameter and never falls back to the selection: say `uuids` or `target`. Commands
   that change edits are listed in `EDITING_COMMANDS` and in `CommandRouter.lua`
   (`EDITING`); a test checks they match.
 - Lua: use `LrTasks.pcall`, not `pcall`, around SDK calls that may yield.

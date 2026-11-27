@@ -54,7 +54,8 @@ end
 -- Resolves the photos a command works on:
 --   params.uuids = { ... }  -> those photos (unknown ids are reported in `missing`)
 --   params.target = "active"   -> the active photo
---   otherwise               -> the selected photos
+--   params.target = "selected" -> the selected photos
+--   anything else           -> an error (never a guess)
 -- Raises an error when nothing is found unless opts.allowEmpty.
 function Photos.resolve(params, opts)
     local catalog = Photos.catalog()
@@ -74,8 +75,12 @@ function Photos.resolve(params, opts)
         if photo then
             photos[1] = photo
         end
-    else
+    elseif params.target == "selected" then
         photos = catalog:getTargetPhotos() or {}
+    else
+        -- Never guess: a missing or misspelled photo parameter must not fall back to the
+        -- selection (the router already refuses it; this guards direct callers).
+        error('Say which photos: photo ids (uuids), or target "selected" or "active".')
     end
     if #photos == 0 and not (opts and opts.allowEmpty) then
         if #missing > 0 then

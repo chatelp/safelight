@@ -18,6 +18,14 @@ check("raw UTF-8 round trip", JSON.decode(JSON.encode({ s = "é📷" })).s == "�
 check("arrays stay arrays", JSON.encode({ 1, 2, 3 }) == "[1,2,3]")
 check("escapes", JSON.decode(JSON.encode({ s = 'a "q"\n\\' })).s == 'a "q"\n\\')
 
+-- The router reads its parameter declarations with this decoder.
+local file = assert(io.open("plugin/Safelight.lrplugin/commands.json", "r"))
+local declared = JSON.decode(file:read("*a"))
+file:close()
+check("commands.json decodes", type(declared.commands) == "table")
+check("commands.json photo flag", declared.commands["develop.get"].photos == true)
+check("commands.json params", declared.commands["develop.get"].params[1] == "keys")
+
 if failures > 0 then
     os.exit(1)
 end
