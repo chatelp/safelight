@@ -337,6 +337,29 @@ async def test_straighten_never_redoes_an_existing_correction_unless_asked(
         assert by_hand["settings"]["UprightTransform_5"] != "by hand"
 
 
+async def test_straighten_check_only_counts_and_changes_nothing(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: _plan())
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        by_hand, other = (catalog.photos[i] for i in catalog.selected)
+        by_hand["settings"].update(PerspectiveUpright=5, UprightTransform_5="by hand")
+        before = {i: (dict(p["settings"]), p.get("label")) for i, p in catalog.photos.items()}
+        args = {"check_only": True}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        after = {i: (dict(p["settings"]), p.get("label")) for i, p in catalog.photos.items()}
+        assert after == before
+        assert result["summary"]["to_straighten"] == 1
+        assert [e["id"] for e in result["to_straighten"]] == ["FAKE-0002"]
+        assert [e["id"] for e in result["already_corrected_skipped"]] == ["FAKE-0001"]
+
+        other["settings"].update(PerspectiveUpright=5)  # nothing left: no error, just counts
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        assert result["summary"]["to_straighten"] == 0
+        assert result["summary"]["already_corrected_skipped"] == 2
+
+
 async def test_straighten_labels_only_what_it_changed(safelight_home, monkeypatch):
     plans = iter([_plan(), None, _plan()])
     monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: next(plans))

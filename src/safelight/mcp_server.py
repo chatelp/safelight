@@ -814,6 +814,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             ),
         ] = False,
         max_photos: Annotated[int, Field(ge=1, le=500)] = 200,
+        check_only: Annotated[
+            bool,
+            Field(
+                description="Change nothing: only say which photos would be straightened "
+                "and which would be skipped, and why. Use it to tell the user the right "
+                "count before asking them."
+            ),
+        ] = False,
         confirmation_token: ConfirmationToken = None,
     ) -> ActionResult:
         """Straighten verticals (and frontal horizontals) of architecture and exhibition
@@ -835,6 +843,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         disagree with the automatic ones, the photo is not changed and is listed in
         left_to_user: tell the user, who can draw the guides in Lightroom (Transform tool).
         Check the result with contact_sheet, and look closer at photos with warnings.
+        Which photos would be skipped is only known by reading their settings: call it
+        first with check_only to tell the user how many photos it will change.
         """
         store_home = hub_client.home
         if chosen_lines is not None:
@@ -857,7 +867,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             label = preferences.change_label  # type: ignore[assignment]
         if label == "none":
             label = None
-        if (status.get("settings") or {}).get("confirm_threshold") == 0:
+        if (status.get("settings") or {}).get("confirm_threshold") == 0 and not check_only:
             # Each photo gets its own correction, so each would need its own approval.
             raise ToolError("straighten_photos needs a confirmation threshold of at least 1.")
         rotated: list[dict[str, Any]] = []
@@ -966,6 +976,30 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 },
             )
 
+        if check_only:
+            return ActionResult(
+                state="succeeded",
+                result={
+                    "summary": {
+                        "to_straighten": len(upright_photos),
+                        "left_to_user": len(left_to_user),
+                        "not_possible": len(not_done),
+                        "rotated_skipped": len(rotated),
+                        "already_corrected_skipped": len(already),
+                        "validated_skipped": len(validated),
+                        "stacked_frames_skipped": skipped_stacked,
+                    },
+                    "to_straighten": [
+                        {"id": p["uuid"], "file": p.get("file_name")} for p in upright_photos
+                    ],
+                    "left_to_user": left_to_user,
+                    "not_possible": not_done,
+                    "rotated_skipped": rotated,
+                    "already_corrected_skipped": already,
+                    "validated_skipped": validated,
+                    "notes": ["nothing was changed (check_only)"],
+                },
+            )
         if not upright_photos:
             if chosen_lines is not None:
                 await note_review([])
