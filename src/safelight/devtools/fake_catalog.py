@@ -214,7 +214,10 @@ class FakeCatalog:
     async def develop_apply(self, params: dict[str, Any], progress: Progress) -> Any:
         photos = self._resolve(params)
         if params.get("dry_run"):
-            return self._plan(photos, f"Change develop settings on {len(photos)} photos")
+            action = (params.get("history_name") or "Change develop settings").removeprefix(
+                "Safelight: "
+            )
+            return self._plan(photos, f"{action} on {len(photos)} photos")
         for index, photo in enumerate(photos):
             await progress(index, len(photos), "Develop")
             snapshot = params.get("snapshot")
@@ -233,6 +236,9 @@ class FakeCatalog:
         photos = self._resolve(params)
         if params.get("dry_run"):
             return self._plan(photos, f"Change metadata of {len(photos)} photos")
+        geometry = params["fields"].get("geometry_by", "none")
+        if geometry not in ("safelight", "user", "by_hand", "none"):
+            raise CommandError("COMMAND_FAILED", "Invalid value for 'geometry_by'")
         for photo in photos:
             for name, value in params["fields"].items():
                 if (name == "geometry_by" and value == "none") or (

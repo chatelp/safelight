@@ -48,7 +48,7 @@ for features that use Adobe's servers.
 | `~/Library/Application Support/Safelight/hub.log` | technical log of the hub |
 | `~/Library/Application Support/Safelight/review.json` | the photos to check shown in the app: photo id, file name and why (at most 200, until you mark them done) |
 | `safelight.log` in the temporary folder, and Lightroom's plug-in log folder | technical log of the plugin: connections, photo ids, and error messages, which can contain file names or paths |
-| `~/Library/Application Support/Safelight/straighten/` | for each photo straightened with `straighten_photos`: the preview it analysed (1600 px, without the correction), the straight lines found and the correction written, so the AI client can choose other lines later. Readable by your user account only; files older than 90 days are removed, and you can delete the folder at any time |
+| `~/Library/Application Support/Safelight/straighten/` | for each photo straightened with `straighten_photos`: the preview it analysed (1600 px, without the correction), the straight lines found and the correction written, so the AI client can choose other lines later, and the photo's transform, Upright and crop settings from before, so `undo_straighten` can put it back. Readable by your user account only; files older than 90 days are removed, and you can delete the folder at any time |
 | memory only | recent activity and results of recent jobs (results for about an hour), lost when the hub stops |
 
 Other previews made for a tool call are not written to disk by Safelight. If you use the menu bar

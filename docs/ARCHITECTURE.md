@@ -26,7 +26,7 @@ running, the relay opens the menu bar app in the background, which starts it (ab
 a second). If the app is not installed, or brings no hub up within 6 seconds, the
 relay starts the hub on its own (in about half a second). It
 passes the AI client's own name (for example "Claude Desktop") to the hub for the
-activity log. It exposes 26 tools, listed in [TOOLS.md](TOOLS.md), plus recipes (MCP prompts) and background guides (MCP resources): read-only tools
+activity log. It exposes 27 tools, listed in [TOOLS.md](TOOLS.md), plus recipes (MCP prompts) and background guides (MCP resources): read-only tools
 are annotated as such; the others go through the hub's policy. When a change needs
 approval, the relay asks the user through MCP elicitation if the client supports it,
 and otherwise returns the confirmation token to the AI. Previews and contact sheets
@@ -160,8 +160,8 @@ The commands the plugin understands are listed in
 
 The plugin also gives each photo three **Safelight fields**, kept in the catalog and
 shown in the Metadata panel (`MetadataDefinition.lua`, "Safelight" set): *Validated*
-(the user approves the photo's edits), *Geometry* (straightened by Safelight, or
-corrected by the user) and *Reject reason*. They are facts about one photo that every
+(the user approves the photo's edits), *Geometry* (straightened by Safelight,
+corrected by the user, or to straighten by hand after Safelight put it back) and *Reject reason*. They are facts about one photo that every
 AI client must respect: the plugin's router takes validated photos out of every
 command that changes edits, whatever the client asked. Adding or changing a field
 needs a new `schemaVersion`; Lightroom then asks once to update the catalog.

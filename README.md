@@ -44,7 +44,7 @@ Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ## What it does
 
 - A connection that survives Lightroom being opened, closed or restarted.
-- 26 tools covering Develop settings, masks, metadata, keywords, collections,
+- 27 tools covering Develop settings, masks, metadata, keywords, collections,
   snapshots, search, export, culling and straightening ([TOOLS.md](docs/TOOLS.md)).
 - Photo previews and contact sheets the AI can look at.
 - Your approval before bulk or risky changes, in the app or in the AI client.

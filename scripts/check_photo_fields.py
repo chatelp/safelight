@@ -76,6 +76,9 @@ async def main() -> None:
         (shown,) = (await runner.read(None, "photos.get", {"uuids": [uuid]}))["photos"]
         check(shown.get("validated") is True, "photos.get shows validated = true")
         check(shown.get("reject_reason") == "check", "photos.get shows the reject reason")
+        reply = await run("metadata.set", {"uuids": [uuid], "fields": {"geometry_by": "by_hand"}})
+        (shown,) = (await runner.read(None, "photos.get", {"uuids": [uuid]}))["photos"]
+        check(shown.get("geometry_by") == "by_hand", "the Geometry field takes by_hand")
 
         edit = {"uuids": [uuid], "settings": {"Exposure": exposure + 0.1}}
         reply = await run("develop.apply", edit)

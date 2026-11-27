@@ -165,7 +165,8 @@ def test_frames_under_a_stack_are_left_out():
         {"uuid": "bracket-1", "stack_position": 2},
         {"uuid": "bracket-2", "stack_position": 3},
         {"uuid": "single"},
+        {"uuid": "copy", "stack_position": 2, "virtual_copy": True},  # under its original
     ]
     kept, skipped = top_of_stacks(photos)
-    assert [p["uuid"] for p in kept] == ["hdr", "single"]
+    assert [p["uuid"] for p in kept] == ["hdr", "single", "copy"]
     assert skipped == 2
