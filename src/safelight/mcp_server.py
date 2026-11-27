@@ -814,6 +814,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             ),
         ] = False,
         max_photos: Annotated[int, Field(ge=1, le=500)] = 200,
+        check_only: Annotated[
+            bool,
+            Field(
+                description="Change nothing: only say which photos would be straightened "
+                "and which would be skipped, and why. Use it to tell the user the right "
+                "count before asking them."
+            ),
+        ] = False,
         confirmation_token: ConfirmationToken = None,
     ) -> ActionResult:
         """Straighten verticals (and frontal horizontals) of architecture and exhibition
@@ -835,18 +843,21 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         disagree with the automatic ones, the photo is not changed and is listed in
         left_to_user: tell the user, who can draw the guides in Lightroom (Transform tool).
         Check the result with contact_sheet, and look closer at photos with warnings.
+        Which photos would be skipped is only known by reading their settings: call it
+        first with check_only to tell the user how many photos it will change.
         """
         store_home = hub_client.home
         if chosen_lines is not None:
             if not chosen_lines:
                 raise ToolError("chosen_lines is empty.")
-            photos, _ = await list_photos(
+            photos, found = await list_photos(
                 runner, ctx, photo_ids=list(chosen_lines), limit=max_photos
             )
         else:
-            photos, _ = await list_photos(
+            photos, found = await list_photos(
                 runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
             )
+        listed = len(photos)
         photos, skipped_stacked = top_of_stacks(photos)
         if not photos:
             raise ToolError("No photos to straighten.")
@@ -966,6 +977,48 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 },
             )
 
+        if check_only:
+            notes = [
+                "nothing was changed (check_only)",
+                "a few photos may still not be straightened: no straight line found, or "
+                "Lightroom refusing; the real run says which",
+            ]
+            if found > listed:
+                notes.append(
+                    f"only the first {listed} of {found} photos were looked at (max_photos): "
+                    "the real run with the same max_photos stops there too"
+                )
+            if (status.get("settings") or {}).get("read_only"):
+                notes.append(
+                    "Safelight is read-only: nothing can be straightened until the user turns "
+                    "read-only off"
+                )
+            return ActionResult(
+                state="succeeded",
+                result={
+                    "summary": {
+                        "to_straighten": len(upright_photos),
+                        "left_to_user": len(left_to_user),
+                        "not_possible": len(not_done),
+                        "rotated_skipped": len(rotated),
+                        "already_corrected_skipped": len(already),
+                        "validated_skipped": len(validated),
+                        "stacked_frames_skipped": skipped_stacked,
+                        "photos_found": found,
+                    },
+                    "to_straighten": [
+                        {"id": p["uuid"], "file": p.get("file_name")} for p in upright_photos
+                    ],
+                    "left_to_user": left_to_user,
+                    "not_possible": [
+                        {k: v for k, v in e.items() if k != "put_back"} for e in not_done
+                    ],
+                    "rotated_skipped": rotated,
+                    "already_corrected_skipped": already,
+                    "validated_skipped": validated,
+                    "notes": notes,
+                },
+            )
         if not upright_photos:
             if chosen_lines is not None:
                 await note_review([])
@@ -1163,7 +1216,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         horizontals in orange, the guides in use thicker in magenta. Choose by eye: the
         long edges of things flat on the wall (frames, panels, prints) and of walls, pillars
         and doors. Never shadows, lines inside a printed photo, ceiling rails or lights that
-        are not on the wall, cables, or short pieces. Take two verticals far apart, one on
+        are not on the wall, cables, short pieces, or the edges of prints standing on a
+        shelf (they lean back). Take two verticals far apart, one on
         each side, and when the view faces the wall, two horizontals: the top and bottom
         edges of works hung on it. Then call straighten_photos with chosen_lines. For a
         view along a wall (receding), or when unsure of the verticals, leave the photo to

@@ -21,7 +21,9 @@ Background for AI clients that straighten photos with Safelight.
 - With two vertical and two horizontal guides, the correction is exact (like
   Lightroom's), with the proportions of the camera rotation.
 - The automatic lines are sometimes wrong: shadows under panels, lines printed inside
-  photos, ceiling rails, short segments. straighten_lines shows every line found,
+  photos, ceiling rails, short segments, and the edges of prints standing on a shelf or
+  ledge, which lean back and are not vertical (in one exhibition they turned the photos
+  by 2 to 6 degrees). straighten_lines shows every line found,
   numbered, so that you can choose the right ones (chosen_lines).
 - When the verticals you choose disagree with the automatic ones by more than about
   half a degree, the photo is left to the user (left_to_user).
