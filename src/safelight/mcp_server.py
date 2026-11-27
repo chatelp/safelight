@@ -850,13 +850,14 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         if chosen_lines is not None:
             if not chosen_lines:
                 raise ToolError("chosen_lines is empty.")
-            photos, _ = await list_photos(
+            photos, found = await list_photos(
                 runner, ctx, photo_ids=list(chosen_lines), limit=max_photos
             )
         else:
-            photos, _ = await list_photos(
+            photos, found = await list_photos(
                 runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
             )
+        listed = len(photos)
         photos, skipped_stacked = top_of_stacks(photos)
         if not photos:
             raise ToolError("No photos to straighten.")
@@ -867,7 +868,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             label = preferences.change_label  # type: ignore[assignment]
         if label == "none":
             label = None
-        if (status.get("settings") or {}).get("confirm_threshold") == 0 and not check_only:
+        if (status.get("settings") or {}).get("confirm_threshold") == 0:
             # Each photo gets its own correction, so each would need its own approval.
             raise ToolError("straighten_photos needs a confirmation threshold of at least 1.")
         rotated: list[dict[str, Any]] = []
@@ -977,6 +978,21 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             )
 
         if check_only:
+            notes = [
+                "nothing was changed (check_only)",
+                "a few photos may still not be straightened: no straight line found, or "
+                "Lightroom refusing; the real run says which",
+            ]
+            if found > listed:
+                notes.append(
+                    f"only the first {listed} of {found} photos were looked at (max_photos): "
+                    "the real run with the same max_photos stops there too"
+                )
+            if (status.get("settings") or {}).get("read_only"):
+                notes.append(
+                    "Safelight is read-only: nothing can be straightened until the user turns "
+                    "read-only off"
+                )
             return ActionResult(
                 state="succeeded",
                 result={
@@ -988,16 +1004,19 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         "already_corrected_skipped": len(already),
                         "validated_skipped": len(validated),
                         "stacked_frames_skipped": skipped_stacked,
+                        "photos_found": found,
                     },
                     "to_straighten": [
                         {"id": p["uuid"], "file": p.get("file_name")} for p in upright_photos
                     ],
                     "left_to_user": left_to_user,
-                    "not_possible": not_done,
+                    "not_possible": [
+                        {k: v for k, v in e.items() if k != "put_back"} for e in not_done
+                    ],
                     "rotated_skipped": rotated,
                     "already_corrected_skipped": already,
                     "validated_skipped": validated,
-                    "notes": ["nothing was changed (check_only)"],
+                    "notes": notes,
                 },
             )
         if not upright_photos:

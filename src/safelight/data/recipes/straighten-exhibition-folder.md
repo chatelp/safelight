@@ -9,12 +9,14 @@ folder "{folder}", the way the user expects.
 3. Leave alone the photos the user validated and the photos that already have an Upright
    correction (Safelight skips both): it may be the user's own work. Use
    replace_existing_upright only if the user asks for exactly that.
-4. Run straighten_photos on the folder with check_only: it changes nothing and says how
-   many photos it would straighten and which it would skip (already corrected, validated,
-   rotated, stacked). The photo descriptions do not show this, so do not count yourself.
-   Tell the user these numbers and ask before changing anything. If there is nothing to
-   straighten, say so and stop.
-5. Run straighten_photos on the folder with guides "verticals_and_frontal".
+4. Run straighten_photos with filters {{"folder": "{folder}"}} and check_only: it changes
+   nothing and says how many photos it would straighten and which it would skip (already
+   corrected, validated, rotated). The photo descriptions do not show this, so do not
+   count yourself. Tell the user "up to" that number (a photo with no clear straight line
+   is left as it is) and ask before changing anything. If there is nothing to straighten,
+   or Safelight is read-only, say so and stop.
+5. Run straighten_photos with the same filters, without check_only, and with guides
+   "verticals_and_frontal".
 6. Check every result:
    - look at the straightened photos with contact_sheet;
    - for photos with warnings, and any that still look wrong, call straighten_lines and

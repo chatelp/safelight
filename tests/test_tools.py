@@ -2,13 +2,14 @@
 
 import asyncio
 import contextlib
+import copy
 
 import mcp.types as types
 import numpy as np
 import pytest
 from mcp import Client
 
-from safelight import mcp_server
+from safelight import mcp_server, straighten_store
 from safelight.devtools.fake_catalog import FakeCatalog
 from safelight.devtools.fake_plugin import FakePlugin
 from safelight.hub import Hub, HubServer
@@ -338,26 +339,49 @@ async def test_straighten_never_redoes_an_existing_correction_unless_asked(
 
 
 async def test_straighten_check_only_counts_and_changes_nothing(safelight_home, monkeypatch):
-    monkeypatch.setattr(mcp_server, "plan_from_jpeg", lambda *_, **__: _plan())
+    def no_rendering(*_, **__):
+        raise AssertionError("check_only must not render or analyse photos")
+
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", no_rendering)
+    monkeypatch.setattr(mcp_server, "fetch_previews", no_rendering)
     async with (
         lightroom(safelight_home) as (catalog, _),
         Client(build_server(HubClient(safelight_home))) as mcp,
     ):
-        by_hand, other = (catalog.photos[i] for i in catalog.selected)
-        by_hand["settings"].update(PerspectiveUpright=5, UprightTransform_5="by hand")
-        before = {i: (dict(p["settings"]), p.get("label")) for i, p in catalog.photos.items()}
-        args = {"check_only": True}
+        ids = ["FAKE-0001", "FAKE-0002", "FAKE-0003"]
+        catalog.photos["FAKE-0001"]["settings"].update(PerspectiveUpright=5)
+        catalog.photos["FAKE-0003"]["validated"] = True
+        before = copy.deepcopy(catalog.photos)
+        args = {"photo_ids": ids, "check_only": True}
         result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
-        after = {i: (dict(p["settings"]), p.get("label")) for i, p in catalog.photos.items()}
-        assert after == before
+        assert catalog.photos == before
+        assert (await HubClient(safelight_home).review())["review"] == []
+        assert straighten_store.load("FAKE-0002", safelight_home) is None
         assert result["summary"]["to_straighten"] == 1
         assert [e["id"] for e in result["to_straighten"]] == ["FAKE-0002"]
         assert [e["id"] for e in result["already_corrected_skipped"]] == ["FAKE-0001"]
+        assert [e["id"] for e in result["validated_skipped"]] == ["FAKE-0003"]
 
-        other["settings"].update(PerspectiveUpright=5)  # nothing left: no error, just counts
+        catalog.photos["FAKE-0002"]["settings"].update(PerspectiveUpright=5)
         result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
-        assert result["summary"]["to_straighten"] == 0
+        assert result["summary"]["to_straighten"] == 0  # nothing left: counts, no error
         assert result["summary"]["already_corrected_skipped"] == 2
+
+
+async def test_straighten_check_only_says_when_nothing_can_be_done(safelight_home):
+    async with (
+        lightroom(safelight_home, read_only=True) as _,
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        args = {"photo_ids": ["FAKE-0001"], "check_only": True}
+        result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
+        assert any("read-only" in note for note in result["notes"])
+    async with (
+        lightroom(safelight_home, threshold=0) as _,
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        refused = await mcp.call_tool("straighten_photos", args)
+        assert refused.is_error and "threshold" in refused.content[0].text
 
 
 async def test_straighten_labels_only_what_it_changed(safelight_home, monkeypatch):
