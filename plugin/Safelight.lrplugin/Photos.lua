@@ -27,7 +27,7 @@ end
 -- Safelight's own fields (MetadataDefinition.lua). Before Lightroom has updated the
 -- catalog for them, reading fails: no photo can be validated yet, so it then has none.
 -- LrTasks.pcall, not pcall: SDK calls may yield, which a plain pcall turns into an error.
-Photos.FIELDS = { "geometry", "validated", "rejectReason" }
+Photos.FIELDS = { "geometry", "validated", "rejectReason", "safelightLabel" }
 
 function Photos.isValidated(photo)
     local ok, value = LrTasks.pcall(function()
@@ -144,6 +144,7 @@ function Photos.summaries(photos)
             validated = s.validated == "yes",
             geometry_by = nonEmpty(s.geometry),
             reject_reason = nonEmpty(s.rejectReason),
+            safelight_label = nonEmpty(s.safelightLabel),
         }
     end
     return out

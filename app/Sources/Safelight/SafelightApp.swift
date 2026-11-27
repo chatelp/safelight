@@ -77,6 +77,8 @@ enum PreviewRenderer {
          "jobs": {"queued": 0, "running": 1},
          "clients": [{"name": "claude-ai", "last_seen_s_ago": 12}, {"name": "claude-code", "last_seen_s_ago": 300}],
          "settings": {"confirm_threshold": 50, "read_only": false, "change_label": "purple", "snapshots": false,
+                      "by_hand_label": "yellow", "validated_label": "none",
+                      "collections": {"set": "Safelight", "to_check": "To check", "by_hand": "To straighten by hand", "validated": "Validated"},
                       "lens_names": [{"lightroom": "DT 17mm F4 SAM", "real": "Canon TS-E 17mm f/4L"}]},
          "approvals": [{"id": "a1", "command": "develop.apply", "client": "claude-ai",
                         "summary": "Change develop settings on 312 photos",

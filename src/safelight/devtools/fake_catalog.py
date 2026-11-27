@@ -100,6 +100,7 @@ class FakeCatalog:
                 "validated": False,
                 "geometry_by": None,
                 "reject_reason": None,
+                "safelight_label": None,
                 "focal_length_mm": [24, 35, 35, 50, 70, 85, 24, 135][index % 8],
                 "aperture": [1.8, 2.8, 2.8, 4.0, 5.6, 1.4, 8.0, 2.0][index % 8],
             }
@@ -112,6 +113,7 @@ class FakeCatalog:
         self.collections: list[dict[str, Any]] = [
             {"id": 1, "name": "Portfolio", "kind": "collection", "photos": []}
         ]
+        self.safelight_set: dict[str, str] | None = None
 
     # -- helpers ----------------------------------------------------------------------------
 
@@ -144,6 +146,7 @@ class FakeCatalog:
             "validated",
             "geometry_by",
             "reject_reason",
+            "safelight_label",
             "focal_length_mm",
             "aperture",
         )
@@ -241,7 +244,7 @@ class FakeCatalog:
             raise CommandError("COMMAND_FAILED", "Invalid value for 'geometry_by'")
         for photo in photos:
             for name, value in params["fields"].items():
-                if (name == "geometry_by" and value == "none") or (
+                if (name in ("geometry_by", "label", "safelight_label") and value == "none") or (
                     name == "reject_reason" and not value
                 ):
                     value = None
@@ -465,6 +468,26 @@ class FakeCatalog:
             ],
         }
 
+    async def tidy(self, params: dict[str, Any], _: Progress) -> Any:
+        """Like the plugin: validated photos lose the color Safelight gave them."""
+        changed = []
+        for photo in self.photos.values():
+            if photo["validated"] and photo.get("safelight_label"):
+                if photo["label"] == photo["safelight_label"]:
+                    label = params["validated_label"]
+                    photo["label"] = None if label == "none" else label
+                    changed.append(photo["uuid"])
+                photo["safelight_label"] = None
+        validated = [
+            u for u in params.get("check") or [] if self.photos.get(u, {}).get("validated")
+        ]
+        return {"changed": changed, "validated": validated}
+
+    async def safelight_collections(self, params: dict[str, Any], _: Progress) -> Any:
+        """Like the plugin: Safelight's collection set and smart collections, by name."""
+        self.safelight_set = {"set": params["set"], **params["names"]}
+        return {"set": 100, **{key: 101 + i for i, key in enumerate(params["names"])}}
+
     async def collections_delete(self, params: dict[str, Any], _: Progress) -> Any:
         found = [c for c in self.collections if c["id"] == params.get("collection_id")]
         if not found:
@@ -562,4 +585,6 @@ class FakeCatalog:
             "export.photos": self.export,
             "collections.list": self.collections_list,
             "collections.delete": self.collections_delete,
+            "safelight.tidy": self.tidy,
+            "safelight.collections": self.safelight_collections,
         }

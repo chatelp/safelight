@@ -7,6 +7,7 @@ struct PreferencesView: View {
     @Bindable var model: AppModel
     @State private var newLightroomName = ""
     @State private var newRealName = ""
+    @State private var names: HubSettings.Collections?
 
     var body: some View {
         Group {
@@ -24,26 +25,19 @@ struct PreferencesView: View {
                     .padding(24)
             }
         }
-        .frame(width: 480)
-        .frame(minHeight: 320)
+        .frame(width: 520)
+        .frame(minHeight: 560)
     }
 
     private func form(_ settings: HubSettings) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             section("Photos Safelight changes", systemImage: "paintpalette") {
-                HStack {
-                    Text("Color label")
-                    Spacer()
-                    Picker("Color label", selection: Binding(
-                        get: { settings.changeLabel },
-                        set: { model.setChangeLabel($0) }
-                    )) {
-                        ForEach(HubSettings.labels, id: \.self) { label in
-                            Text(label == "none" ? "None" : label.capitalized).tag(label)
-                        }
+                colorRow("Changed by Safelight, to check", settings.changeLabel) { model.setChangeLabel($0) }
+                if settings.hasStates {
+                    colorRow("To straighten by hand", settings.byHandLabel) { model.setByHandLabel($0) }
+                    colorRow("When you validate a photo", settings.validatedLabel, none: "Remove the color") {
+                        model.setValidatedLabel($0)
                     }
-                    .labelsHidden()
-                    .fixedSize()
                 }
                 HStack {
                     Text("Snapshot before changing a photo's geometry")
@@ -56,7 +50,11 @@ struct PreferencesView: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 }
-                note("The color helps you find and check them; a photo that already has another color keeps it. Lightroom's History keeps the earlier settings even without a snapshot.")
+                note("The colors help you find and check them. Safelight only changes the colors it gave itself: a photo with a color of yours keeps it. Lightroom's History keeps the earlier settings even without a snapshot.")
+            }
+            if settings.hasStates {
+                Divider()
+                collectionsSection(settings)
             }
             Divider()
             section("Lens names", systemImage: "camera.aperture") {
@@ -91,6 +89,56 @@ struct PreferencesView: View {
             Spacer(minLength: 0)
         }
         .padding(20)
+    }
+
+    private func colorRow(
+        _ title: String, _ value: String, none: String = "None", set: @escaping (String) -> Void
+    ) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Picker(title, selection: Binding(get: { value }, set: set)) {
+                ForEach(HubSettings.labels, id: \.self) { label in
+                    Text(label == "none" ? none : label.capitalized).tag(label)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+
+    private func collectionsSection(_ settings: HubSettings) -> some View {
+        let draft = Binding<HubSettings.Collections>(
+            get: { names ?? settings.collections },
+            set: { names = $0 }
+        )
+        return section("Collections in Lightroom", systemImage: "rectangle.stack") {
+            note("Safelight keeps these smart collections in Lightroom's Collections panel, filled from its fields. Leave a name empty for a collection you do not want.")
+            nameRow("Collection set", text: draft.set)
+            nameRow("To check", text: draft.toCheck)
+            nameRow("To straighten by hand", text: draft.byHand)
+            nameRow("Validated", text: draft.validated)
+            HStack {
+                Spacer()
+                Button("Rename") {
+                    model.setCollections(draft.wrappedValue)
+                    names = nil
+                }
+                .disabled(names == nil || names == settings.collections
+                    || draft.wrappedValue.set.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+    }
+
+    private func nameRow(_ title: String, text: Binding<String>) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            TextField(title, text: text, prompt: Text("Not created"))
+                .textFieldStyle(.roundedBorder)
+                .labelsHidden()
+                .frame(width: 240)
+        }
     }
 
     private func section(

@@ -21,7 +21,7 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
     #expect(status.plugin.connected)
     #expect(status.plugin.lightroomVersion == "16.0.1")
     #expect(status.clients.first?.name == "claude-ai")
-    #expect(status.settings == HubSettings(confirmThreshold: 50, readOnly: false, hasPreferences: false))
+    #expect(status.settings == HubSettings(confirmThreshold: 50, readOnly: false, hasPreferences: false, hasStates: false))
 }
 
 @Test func decodesApprovalsAndTheirActivity() throws {
@@ -90,6 +90,19 @@ private func decode<T: Decodable>(_: T.Type, _ json: String) throws -> T {
     #expect(settings.changeLabel == "purple" && settings.snapshots && settings.confirmThreshold == 5)
     let current = try decode(HubSettings.self, #"{"confirm_threshold": 5, "read_only": false, "change_label": "none", "snapshots": false, "lens_names": []}"#)
     #expect(current.hasPreferences && current.changeLabel == "none")
+    #expect(!current.hasStates && current.byHandLabel == "yellow" && current.collections.set == "Safelight")
+}
+
+@Test func colorsPerStateAndCollectionNames() throws {
+    let settings = try decode(HubSettings.self, #"{"confirm_threshold": 50, "read_only": false, "change_label": "purple", "by_hand_label": "red", "validated_label": "none", "snapshots": false, "lens_names": [], "collections": {"set": "Safelight", "to_check": "À vérifier", "by_hand": "", "validated": "Validated"}}"#)
+    #expect(settings.hasStates && settings.byHandLabel == "red")
+    #expect(settings.collections.toCheck == "À vérifier" && settings.collections.byHand == "")
+    let names = HubSettings.Collections(toCheck: "À vérifier")
+    let data = try HubAPI.encoder.encode(HubSettings.Change(byHandLabel: "yellow", collections: names))
+    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+    #expect(Set(object?.keys.map { $0 } ?? []) == ["by_hand_label", "collections"])
+    let sent = object?["collections"] as? [String: String]
+    #expect(sent == ["set": "Safelight", "to_check": "À vérifier", "by_hand": "To straighten by hand", "validated": "Validated"])
 }
 
 // MARK: AI client configuration

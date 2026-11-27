@@ -86,6 +86,38 @@ def _original_geometry(
     return geometry_settings(settings), photo.get("geometry_by")
 
 
+def safelight_color(photo: dict[str, Any], preferences: Settings) -> bool:
+    """Whether a photo's color label is one Safelight gave it (or it has none), so that
+    Safelight may change it. A color of the user's is never changed."""
+    label = photo.get("label")
+    if label is None:
+        return True
+    if photo.get("safelight_label"):
+        return label == photo["safelight_label"]
+    # Photos marked before Safelight recorded its colors: its own colors on its own photos.
+    return photo.get("geometry_by") in ("safelight", "by_hand") and label in (
+        preferences.change_label,
+        preferences.by_hand_label,
+    )
+
+
+def label_fields(
+    photo: dict[str, Any], color: str, preferences: Settings
+) -> tuple[dict[str, Any], str]:
+    """The metadata fields that give a photo Safelight's `color` ("none": no color), and
+    what its label is then; no fields when its color is the user's or already right."""
+    label = photo.get("label")
+    if not safelight_color(photo, preferences):
+        return {}, f"kept {label}"
+    if color == "none":
+        if label is None:
+            return {}, "none"
+        return {"label": "none", "safelight_label": "none"}, "none"
+    if label == color and photo.get("safelight_label") == color:
+        return {}, color
+    return {"label": color, "safelight_label": color}, color
+
+
 def _same(a: Any, b: Any) -> bool:
     if isinstance(a, int | float) and isinstance(b, int | float):
         return abs(a - b) < 1e-6
@@ -1136,11 +1168,11 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             """Gives a straightened photo the user's color and records in the catalog that
             Safelight straightened it; says what its label is now, and what went wrong."""
             out: dict[str, str] = {}
-            if label:
-                if photo.get("label") not in (None, label):
-                    out["label"] = f"kept {photo['label']}"
-                else:
-                    out["label"] = str(label) if await write(photo, {"label": label}) else "failed"
+            fields, shown = label_fields(photo, label or "none", preferences)
+            if fields:
+                out["label"] = shown if await write(photo, fields) else "failed"
+            elif label or photo.get("label"):
+                out["label"] = shown
             if not await write(photo, {"geometry_by": "safelight"}):
                 out["geometry_field"] = "failed"
             return out
@@ -1320,7 +1352,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         had before Safelight first straightened it, and its Geometry field becomes "To
         straighten by hand" (or "Corrected by you" again if it said so before), so
         straighten_photos leaves it alone; it goes to the app's list of photos to check and
-        keeps its color label. A photo whose correction was taken off by hand is put back
+        gets the user's color for photos to straighten by hand (a color of the user's is
+        kept). A photo whose correction was taken off by hand is put back
         too, unless it was changed further (re-cropped...): then only its field changes.
         Photos not straightened by Safelight, validated by the user, re-cropped or corrected
         again since are not touched. Running it again finishes what an interrupted run left.
@@ -1333,6 +1366,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         status = await hub_client.status()
         if (status.get("settings") or {}).get("confirm_threshold") == 0:
             raise ToolError("undo_straighten needs a confirmation threshold of at least 1.")
+        preferences = Settings()
+        preferences.update(status.get("settings") or {}, strict=False)
         restore: dict[str, tuple[dict[str, Any], str]] = {}  # id -> (geometry, field)
         mark_only: dict[str, tuple[str, str]] = {}  # id -> (field, why, for the app)
         skipped: list[dict[str, Any]] = []
@@ -1379,7 +1414,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             'their Geometry field now says "To straighten by hand" (or "Corrected by you" '
             "when it said so before): straighten_photos leaves them alone, and they are in "
             "the app's list of photos to check",
-            "their color label is kept so the user finds them",
+            "they get the user's color for photos to straighten by hand, unless their "
+            "color is the user's own",
         ]
         if found > len(photos):
             notes.append(f"only the first {len(photos)} of {found} photos were looked at")
@@ -1457,7 +1493,12 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         continue
                 else:
                     field = mark_only[photo_id][0]
-                fields = {"geometry_by": field}
+                # By hand: the user's color for it; their own correction back: no color.
+                color = preferences.by_hand_label if field == "by_hand" else "none"
+                fields = {
+                    "geometry_by": field,
+                    **label_fields(by_id[photo_id], color, preferences)[0],
+                }
                 error = await run_one("metadata.set", {"uuids": [photo_id], "fields": fields})
                 if error:
                     not_done.append(

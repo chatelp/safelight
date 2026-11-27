@@ -209,8 +209,13 @@ def test_settings_validation_and_persistence(tmp_path):
         "change_label": "none",
         "snapshots": False,
         "lens_names": lens,
+        "by_hand_label": "red",
+        "validated_label": "green",
     }
-    assert hub.update_settings(changes) == changes
+    saved = hub.update_settings({**changes, "collections": {"to_check": "À vérifier"}})
+    assert {key: saved[key] for key in changes} == changes
+    assert saved["collections"]["to_check"] == "À vérifier"
+    assert saved["collections"]["set"] == "Safelight"  # a partial change keeps the others
     loaded = Settings.load(path)
     assert loaded.confirm_threshold == 20 and loaded.lens_names == lens
     assert loaded.real_lens("DT 17mm F4 SAM") == "Canon TS-E 17mm f/4L"
@@ -226,6 +231,10 @@ def test_settings_validation_and_persistence(tmp_path):
         {"read_only": "yes"},
         {"unknown": 1},
         {"change_label": "orange"},
+        {"by_hand_label": "pink"},
+        {"collections": {"set": ""}},
+        {"collections": {"other": "X"}},
+        {"collections": {"to_check": "x" * 61}},
         {"snapshots": 1},
         {"lens_names": [{"lightroom": "A"}]},
         {"lens_names": [{"lightroom": "A", "real": "B"}, {"lightroom": "A", "real": "C"}]},

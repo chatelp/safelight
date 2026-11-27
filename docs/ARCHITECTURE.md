@@ -66,10 +66,18 @@ A small local daemon, one per user session:
   catalog;
 - keeps an **activity log** and the list of recently seen AI clients;
 - stores the user's **settings** in `settings.json` next to `hub.json`: confirmation
-  threshold, read-only mode, the color label for photos Safelight changes (purple by
-  default), whether to take a snapshot before a geometry change, and the real names of
-  lenses Lightroom names wrongly. They are the user's stable choices, edited in the app,
-  and every AI client follows them without being told.
+  threshold, read-only mode, the color labels Safelight gives photos by state (changed,
+  to check: purple; to straighten by hand: yellow; validated by the user: color removed),
+  the names of Safelight's smart collections, whether to take a snapshot before a
+  geometry change, and the real names of lenses Lightroom names wrongly. They are the
+  user's stable choices, edited in the app, and every AI client follows them without
+  being told;
+- keeps up **Safelight's own things in the catalog** (`Hub._upkeep`, while Lightroom is
+  connected and read-only mode is off): it creates or renames Safelight's smart
+  collections ("To check", "To straighten by hand", "Validated", in a "Safelight" set,
+  filled by Lightroom from Safelight's fields), and every half minute takes Safelight's
+  color off the photos the user validated, and those photos off the list of photos to
+  check.
 
 #### Jobs
 
@@ -161,8 +169,10 @@ The commands the plugin understands are listed in
 The plugin also gives each photo three **Safelight fields**, kept in the catalog and
 shown in the Metadata panel (`MetadataDefinition.lua`, "Safelight" set): *Validated*
 (the user approves the photo's edits), *Geometry* (straightened by Safelight,
-corrected by the user, or to straighten by hand after Safelight put it back) and *Reject reason*. They are facts about one photo that every
-AI client must respect: the plugin's router takes validated photos out of every
+corrected by the user, or to straighten by hand after Safelight put it back) and *Reject reason*, plus a hidden one,
+the color label Safelight gave the photo, so that Safelight only ever changes its own
+colors and never the user's. They are facts about one photo that every AI client must
+respect: the plugin's router takes validated photos out of every
 command that changes edits, whatever the client asked. Adding or changing a field
 needs a new `schemaVersion`; Lightroom then asks once to update the catalog.
 

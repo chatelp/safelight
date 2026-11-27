@@ -93,21 +93,30 @@ public struct HubSettings: Decodable, Sendable, Equatable {
         public var confirmThreshold: Int?
         public var readOnly: Bool?
         public var changeLabel: String?
+        public var byHandLabel: String?
+        public var validatedLabel: String?
         public var snapshots: Bool?
         public var lensNames: [LensName]?
+        public var collections: Collections?
 
         public init(
             confirmThreshold: Int? = nil,
             readOnly: Bool? = nil,
             changeLabel: String? = nil,
+            byHandLabel: String? = nil,
+            validatedLabel: String? = nil,
             snapshots: Bool? = nil,
-            lensNames: [LensName]? = nil
+            lensNames: [LensName]? = nil,
+            collections: Collections? = nil
         ) {
             self.confirmThreshold = confirmThreshold
             self.readOnly = readOnly
             self.changeLabel = changeLabel
+            self.byHandLabel = byHandLabel
+            self.validatedLabel = validatedLabel
             self.snapshots = snapshots
             self.lensNames = lensNames
+            self.collections = collections
         }
 
         /// The same change applied to settings shown before the hub answers.
@@ -116,8 +125,11 @@ public struct HubSettings: Decodable, Sendable, Equatable {
             if let confirmThreshold { result.confirmThreshold = confirmThreshold }
             if let readOnly { result.readOnly = readOnly }
             if let changeLabel { result.changeLabel = changeLabel }
+            if let byHandLabel { result.byHandLabel = byHandLabel }
+            if let validatedLabel { result.validatedLabel = validatedLabel }
             if let snapshots { result.snapshots = snapshots }
             if let lensNames { result.lensNames = lensNames }
+            if let collections { result.collections = collections }
             return result
         }
     }
@@ -133,36 +145,73 @@ public struct HubSettings: Decodable, Sendable, Equatable {
         }
     }
 
+    /// Names of Safelight's smart collections in Lightroom: the set, and one per state
+    /// ("" for a collection Safelight does not create).
+    public struct Collections: Codable, Sendable, Equatable {
+        public var set: String
+        public var toCheck: String
+        public var byHand: String
+        public var validated: String
+
+        public init(
+            set: String = "Safelight",
+            toCheck: String = "To check",
+            byHand: String = "To straighten by hand",
+            validated: String = "Validated"
+        ) {
+            self.set = set
+            self.toCheck = toCheck
+            self.byHand = byHand
+            self.validated = validated
+        }
+    }
+
     public static let labels = ["none", "red", "yellow", "green", "blue", "purple"]
 
     public var confirmThreshold: Int
     public var readOnly: Bool
-    /// Color label for photos Safelight changes ("none": no label).
+    /// Color label for photos Safelight changes, for the user to check ("none": no label).
     public var changeLabel: String
+    /// Color label for photos the user must straighten by hand.
+    public var byHandLabel: String
+    /// What Safelight's color becomes when the user validates a photo ("none": removed).
+    public var validatedLabel: String
+    public var collections: Collections
     /// Whether Safelight saves a snapshot before changing a photo's geometry.
     public var snapshots: Bool
     public var lensNames: [LensName]
     /// False for hubs before 0.2, which know only the first two settings.
     public var hasPreferences: Bool
+    /// False for hubs without colors per state and collections.
+    public var hasStates: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case confirmThreshold, readOnly, changeLabel, snapshots, lensNames
+        case confirmThreshold, readOnly, changeLabel, byHandLabel, validatedLabel, snapshots
+        case lensNames, collections
     }
 
     public init(
         confirmThreshold: Int = 50,
         readOnly: Bool = false,
         changeLabel: String = "purple",
+        byHandLabel: String = "yellow",
+        validatedLabel: String = "none",
         snapshots: Bool = true,
         lensNames: [LensName] = [],
-        hasPreferences: Bool = true
+        collections: Collections = Collections(),
+        hasPreferences: Bool = true,
+        hasStates: Bool = true
     ) {
         self.confirmThreshold = confirmThreshold
         self.readOnly = readOnly
         self.changeLabel = changeLabel
+        self.byHandLabel = byHandLabel
+        self.validatedLabel = validatedLabel
         self.snapshots = snapshots
         self.lensNames = lensNames
+        self.collections = collections
         self.hasPreferences = hasPreferences
+        self.hasStates = hasStates
     }
 
     // Hubs before 0.2 send only the first two settings.
@@ -172,9 +221,13 @@ public struct HubSettings: Decodable, Sendable, Equatable {
             confirmThreshold: try container.decode(Int.self, forKey: .confirmThreshold),
             readOnly: try container.decode(Bool.self, forKey: .readOnly),
             changeLabel: try container.decodeIfPresent(String.self, forKey: .changeLabel) ?? "purple",
+            byHandLabel: try container.decodeIfPresent(String.self, forKey: .byHandLabel) ?? "yellow",
+            validatedLabel: try container.decodeIfPresent(String.self, forKey: .validatedLabel) ?? "none",
             snapshots: try container.decodeIfPresent(Bool.self, forKey: .snapshots) ?? true,
             lensNames: try container.decodeIfPresent([LensName].self, forKey: .lensNames) ?? [],
-            hasPreferences: container.contains(.changeLabel)
+            collections: try container.decodeIfPresent(Collections.self, forKey: .collections) ?? Collections(),
+            hasPreferences: container.contains(.changeLabel),
+            hasStates: container.contains(.byHandLabel)
         )
     }
 }

@@ -1,6 +1,7 @@
 -- Catalog commands: find and look at photos, collections, virtual copies, rotation.
 local LrApplication = import "LrApplication"
 local LrApplicationView = import "LrApplicationView"
+local LrPrefs = import "LrPrefs"
 local LrStringUtils = import "LrStringUtils"
 local LrTasks = import "LrTasks"
 
@@ -240,6 +241,87 @@ function Catalog.createCollection(params)
         error("Lightroom did not create the collection")
     end
     return { id = created.localIdentifier, name = created:getName(), kind = kind }
+end
+
+-- Safelight's smart collections, filled by Lightroom from Safelight's own fields.
+local function field(name)
+    return "sdktext:" .. _PLUGIN.id .. "." .. name
+end
+
+local function notValidated(criterion)
+    return {
+        combine = "intersect",
+        criterion,
+        { combine = "exclude", { criteria = field("validated"), operation = "==", value = "yes" } },
+    }
+end
+
+local SMART = {
+    to_check = function()
+        return notValidated({ criteria = field("geometry"), operation = "==", value = "safelight" })
+    end,
+    by_hand = function()
+        return notValidated({ criteria = field("geometry"), operation = "==", value = "by_hand" })
+    end,
+    validated = function()
+        return { combine = "intersect", { criteria = field("validated"), operation = "==", value = "yes" } }
+    end,
+}
+
+local function existing(id, wantSet)
+    if not id then
+        return nil
+    end
+    local ok, item = LrTasks.pcall(collectionById, id, wantSet)
+    if ok and (wantSet or item:isSmartCollection()) then
+        return item
+    end
+    return nil
+end
+
+-- safelight.collections {set, names = {to_check, by_hand, validated}}: creates Safelight's
+-- collection set and smart collections, or renames them. Found again by id (kept in the
+-- plugin's preferences, per catalog), so the user may move them; a deleted one comes back.
+function Catalog.safelightCollections(params)
+    if type(params.set) ~= "string" or params.set == "" or type(params.names) ~= "table" then
+        error("set and names are required")
+    end
+    local catalog = Photos.catalog()
+    local prefs = LrPrefs.prefsForPlugin()
+    local all = prefs.collections or {}
+    local known = all[catalog:getPath()] or {}
+    local ids = {}
+    local set = existing(known.set, true) -- looked up before the write gate
+    local found = {}
+    for key, _ in pairs(SMART) do
+        found[key] = existing(known[key], false)
+    end
+    Batch.writeOnce("Safelight: Collections", function()
+        if not set then
+            set = catalog:createCollectionSet(params.set, nil, true)
+        elseif set:getName() ~= params.set then
+            set:setName(params.set)
+        end
+        ids.set = set.localIdentifier
+        for key, search in pairs(SMART) do
+            local name = params.names[key]
+            if type(name) == "string" and name ~= "" then
+                local collection = found[key]
+                if not collection then
+                    collection = catalog:createSmartCollection(name, search(), set, true)
+                else
+                    if collection:getName() ~= name then
+                        collection:setName(name)
+                    end
+                    collection:setSearchDescription(search())
+                end
+                ids[key] = collection.localIdentifier
+            end
+        end
+    end)
+    all[catalog:getPath()] = ids
+    prefs.collections = all
+    return ids
 end
 
 local function changeMembership(params, job, add)

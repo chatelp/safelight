@@ -54,8 +54,9 @@ It draws the popover with sample data in light and dark appearance. Native contr
   2 minutes for the answer, then asks in the AI client instead.
 - **Photos to check**: photos an AI client changed that need the user's eye, with why;
   the checkmark (or All Done) takes them off the list.
-- **Preferences window**: color label for photos Safelight changes, snapshot before a
-  geometry change, real names of lenses Lightroom names wrongly. Check its layout with
+- **Preferences window**: color labels by state (changed by Safelight, to straighten by
+  hand, validated), names of Safelight's smart collections in Lightroom, snapshot before
+  a geometry change, real names of lenses Lightroom names wrongly. Check its layout with
   `Safelight --render-preferences /tmp/prefs.png`.
 - **Set Up menu**: registers Safelight with Claude Desktop, Claude Code, Cursor and
   Codex (each configuration file is backed up first), and installs the Lightroom plugin
