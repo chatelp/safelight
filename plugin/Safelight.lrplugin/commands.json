@@ -1,0 +1,55 @@
+{
+  "about": "The parameters each plugin command accepts. The router refuses any other parameter, and a command marked photos must say which photos: uuids (a non-empty list) or target \"selected\" or \"active\". The fake catalog checks the same file. Keep every registered command here (a test checks it).",
+  "common": ["dry_run"],
+  "commands": {
+    "system.ping": {"params": []},
+    "system.progress_test": {"params": ["steps", "delay_s"]},
+    "system.list_commands": {"params": []},
+    "inspect.app": {"params": []},
+    "inspect.develop_ranges": {"photos": true, "params": []},
+    "inspect.develop_settings": {"params": []},
+    "inspect.raw_metadata": {"params": []},
+    "inspect.thumbnails": {"params": ["sizes"]},
+    "inspect.develop_controller": {"params": []},
+
+    "catalog.info": {"params": []},
+    "photos.get": {"photos": true, "params": ["limit", "offset"]},
+    "photos.search": {"params": ["search", "sort", "ascending", "limit", "offset"]},
+    "photos.preview": {"photos": true, "params": ["size"]},
+    "photos.rotate": {"photos": true, "params": ["direction"]},
+    "photos.create_virtual_copies": {"photos": true, "params": ["name"]},
+
+    "collections.list": {"params": []},
+    "collections.photos": {"params": ["collection_id", "limit", "offset"]},
+    "collections.create": {"params": ["name", "parent_id", "kind", "search"]},
+    "collections.add": {"photos": true, "params": ["collection_id"]},
+    "collections.remove_photos": {"photos": true, "params": ["collection_id"]},
+    "collections.delete": {"params": ["collection_id"]},
+
+    "metadata.set": {"photos": true, "params": ["fields"]},
+    "keywords.list": {"params": ["query", "limit"]},
+    "keywords.add": {"photos": true, "params": ["keywords"]},
+    "keywords.remove": {"photos": true, "params": ["keywords"]},
+
+    "develop.get": {"photos": true, "params": ["keys"]},
+    "develop.apply": {"photos": true, "params": ["settings", "relative", "history_name", "snapshot"]},
+    "develop.copy": {"photos": true, "params": ["from", "keys"]},
+    "develop.auto_tone": {"photos": true, "params": []},
+    "develop.auto_white_balance": {"photos": true, "params": []},
+    "develop.reset": {"photos": true, "params": []},
+    "develop.apply_preset": {"photos": true, "params": ["preset_uuid", "amount"]},
+    "presets.list": {"params": []},
+    "snapshots.list": {"photos": true, "params": []},
+    "snapshots.create": {"photos": true, "params": ["name", "update_existing"]},
+    "snapshots.apply": {"photos": true, "params": ["snapshot_id", "name"]},
+    "snapshots.delete": {"photos": true, "params": ["snapshot_id", "name"]},
+
+    "masks.list": {"photos": true, "params": []},
+    "masks.adjust": {"photos": true, "params": ["mask_id", "adjustments", "relative"]},
+    "masks.create": {"photos": true, "params": ["kind"]},
+    "masks.delete": {"photos": true, "params": ["mask_id"]},
+    "masks.invert": {"photos": true, "params": ["mask_id"]},
+
+    "export.photos": {"photos": true, "params": ["destination", "format", "if_exists", "long_edge_px", "quality", "color_space", "bit_depth", "sharpen", "strip_metadata", "remove_location"]}
+  }
+}

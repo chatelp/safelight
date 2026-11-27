@@ -58,6 +58,15 @@ async def main() -> None:
             sys.exit("The hub asks for approval: raise the threshold or use fewer photos.")
         return reply
 
+    # The router refuses a wrong parameter instead of answering for another photo.
+    for params, expected in (({"photo": uuid}, "Unknown parameter"), ({}, "needs photos")):
+        reply = await runner.settle(await client.run("develop.get", params, wait_s=30))
+        error = reply.get("error") or {}
+        check(
+            reply.get("state") != "succeeded" and expected in str(error.get("message")),
+            f"develop.get {params or '{}'} is refused ({expected})",
+        )
+
     try:
         reply = await run(
             "metadata.set",
