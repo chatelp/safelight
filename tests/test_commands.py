@@ -62,8 +62,9 @@ def test_every_parameter_a_handler_reads_is_declared():
     functions = lua_functions()
     missing = {}
     for command, handler in registered().items():
-        if handler not in functions:
+        if handler is None:
             continue  # an inline handler (system.*), declared by hand
+        assert handler in functions, f"the scan cannot find {handler}: update this test"
         spec = declared["commands"][command]
         known = {*declared["common"], *spec["params"]}
         if spec.get("photos"):
@@ -81,6 +82,8 @@ def test_every_parameter_a_handler_reads_is_declared():
         ("develop.get", {}, 'needs photos: photo ids (uuids), or target "selected"'),
         ("develop.get", {"uuids": []}, "needs photos"),
         ("develop.apply", {"uuids": ["X"], "target": "selected"}, "not both"),
+        ("develop.apply", {"uuids": [], "target": "selected"}, "not both"),
+        ("develop.get", {}, "restart it"),  # what an older relay sends for the selection
         ("develop.apply", {"target": "everything"}, "needs photos"),
         ("catalog.info", {"uuids": ["X"]}, "Unknown parameter for catalog.info: uuids"),
         ("brand.new", {}, "No parameters are declared for brand.new"),

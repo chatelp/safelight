@@ -252,11 +252,16 @@ local function checkParams(command, params)
     end
     if spec.photos then
         local ids = type(params.uuids) == "table" and #params.uuids > 0
-        if ids and params.target ~= nil then
+        if params.uuids ~= nil and params.target ~= nil then
             return command .. ": give photo ids (uuids) or a target, not both"
         end
         if not ids and params.target ~= "selected" and params.target ~= "active" then
-            return command .. ' needs photos: photo ids (uuids), or target "selected" or "active"'
+            local problem = command .. ' needs photos: photo ids (uuids), or target "selected" or "active"'
+            if next(params) == nil then
+                problem = problem .. ". An AI app started before a Safelight update may send"
+                    .. " this: restart it"
+            end
+            return problem
         end
     end
     return nil

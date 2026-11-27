@@ -53,10 +53,13 @@ def check_params(command: str, params: dict[str, Any]) -> str | None:
     if spec.get("photos"):
         uuids, target = params.get("uuids"), params.get("target")
         ids = isinstance(uuids, list) and len(uuids) > 0
-        if ids and target is not None:
+        if uuids is not None and target is not None:
             return f"{command}: give photo ids (uuids) or a target, not both"
         if not ids and target not in ("selected", "active"):
-            return f'{command} needs photos: photo ids (uuids), or target "selected" or "active"'
+            problem = f'{command} needs photos: photo ids (uuids), or target "selected" or "active"'
+            if not present:
+                problem += ". An AI app started before a Safelight update may send this: restart it"
+            return problem
     return None
 
 
