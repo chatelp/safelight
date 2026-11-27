@@ -233,6 +233,9 @@ class FakeCatalog:
         photos = self._resolve(params)
         if params.get("dry_run"):
             return self._plan(photos, f"Change metadata of {len(photos)} photos")
+        geometry = params["fields"].get("geometry_by", "none")
+        if geometry not in ("safelight", "user", "by_hand", "none"):
+            raise CommandError("COMMAND_FAILED", "Invalid value for 'geometry_by'")
         for photo in photos:
             for name, value in params["fields"].items():
                 if (name == "geometry_by" and value == "none") or (

@@ -25,7 +25,7 @@ from PIL import Image, ImageDraw
 
 from .contact_sheet import _font
 from .paths import safelight_home
-from .upright import ANALYSIS_PX, Line, Plan, geometry_settings
+from .upright import ANALYSIS_PX, Line, Plan
 
 # Settings that move the lines of the image before Upright: if they change, the lines kept
 # no longer match the photo.
@@ -63,9 +63,11 @@ class Saved:
     auto_guide_lines: list[int]  # the guides of the automatic run
     auto_matrix: list[float]
     jpeg: bytes
-    # The transform, Upright and crop before Safelight's first correction (None for photos
-    # straightened by an older Safelight), to put the photo back as it was.
+    # The transform, Upright and crop before Safelight's first correction, and the photo's
+    # Geometry field then (None when unknown: straightened by an older Safelight), to put
+    # the photo back as it was.
     before: dict[str, Any] | None = None
+    geometry_by_before: str | None = None
 
     def lens_changed(self, settings: dict[str, Any]) -> bool:
         return any(settings.get(key) != self.lens.get(key) for key in LENS_KEYS)
@@ -99,9 +101,12 @@ def save(
     settings: dict[str, Any],
     jpeg: bytes | None = None,
     home: Path | None = None,
+    before: dict[str, Any] | None = None,
+    geometry_by_before: str | None = None,
 ) -> None:
     """Keep what was found and written. Without `jpeg`, a new choice of guides: the
-    preview, lines and automatic guides already kept stay."""
+    preview, lines, automatic guides and settings from before already kept stay. `before`
+    is the photo's geometry before Safelight's first correction (None: unknown)."""
     folder = store_dir(home)
     folder.mkdir(parents=True, exist_ok=True)
     os.chmod(folder, 0o700)  # previews can show people
@@ -127,7 +132,8 @@ def save(
             "lens": {key: settings.get(key) for key in LENS_KEYS},
             "auto_guide_lines": plan.guide_lines,
             "auto_matrix": matrix,
-            "before": geometry_settings(settings),
+            "before": before,
+            "geometry_by_before": geometry_by_before,
         }
     data_path.write_text(json.dumps(data))
 
@@ -163,6 +169,7 @@ def load(photo_id: str, home: Path | None = None) -> Saved | None:
         auto_matrix=list(data["auto_matrix"]),
         jpeg=jpeg,
         before=dict(data["before"]) if isinstance(data.get("before"), dict) else None,
+        geometry_by_before=data.get("geometry_by_before"),
     )
 
 

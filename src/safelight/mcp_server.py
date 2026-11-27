@@ -45,6 +45,50 @@ TO_DO_BY_HAND = (
     "Safelight put it back as it was: straighten it by hand in Lightroom (Transform, Guided), "
     "then set its Geometry field to Corrected by you"
 )
+TAKEN_OFF_BY_HAND = (
+    "Safelight's correction was taken off: straighten it by hand in Lightroom (Transform, "
+    "Guided), then set its Geometry field to Corrected by you. Its crop from before was not "
+    "put back (see Lightroom's History)"
+)
+NO_RECORD = (
+    "Safelight no longer has its settings from before (it keeps them 90 days, and older "
+    "versions did not): use Lightroom's History, or the snapshot 'Before Safelight "
+    "straighten' if there is one"
+)
+TAKEN_OFF = (
+    "Safelight's correction was taken off: undo_straighten leaves it to the user, "
+    "replace_existing_upright straightens it again"
+)
+# Crop and transform sliders as straighten_photos leaves them: a photo whose correction
+# was only taken off since still has them.
+_LEFT_BY_STRAIGHTEN = {
+    k: v for k, v in RESET_SETTINGS.items() if k.startswith(("Perspective", "Crop"))
+}
+_LEFT_BY_STRAIGHTEN.pop("PerspectiveUpright")
+
+
+def _original_geometry(
+    photo: dict[str, Any], settings: dict[str, Any], home
+) -> tuple[dict[str, Any] | None, str | None]:
+    """The geometry and Geometry field to put back one day, for a photo about to be
+    straightened: its current ones, unless they are Safelight's own earlier correction,
+    in which case those Safelight kept from before it (None when it kept none)."""
+    if photo.get("geometry_by") == "safelight":
+        prior = straighten_store.load(photo["uuid"], home)
+        if prior is not None and prior.is_current(settings):
+            return prior.before, prior.geometry_by_before
+        if prior is None and settings.get("PerspectiveUpright") == 5:
+            return None, None  # Safelight's correction, kept no longer: unknown
+    return geometry_settings(settings), photo.get("geometry_by")
+
+
+def _only_taken_off(settings: dict[str, Any]) -> bool:
+    """Whether a photo is as straighten_photos left it, except that its Upright is off."""
+    return not settings.get("PerspectiveUpright") and all(
+        settings.get(key, value) == value for key, value in _LEFT_BY_STRAIGHTEN.items()
+    )
+
+
 # How long a change waits for the user's answer in the Safelight app before the AI
 # client asks instead.
 APP_APPROVAL_WAIT_S = 120.0
@@ -816,7 +860,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             bool,
             Field(
                 description="Also redo photos that already have an Upright correction, by "
-                "hand or by an earlier run. Only when the user asks for exactly that."
+                "hand or by an earlier run, and photos whose Geometry field leaves them to "
+                "the user. Only when the user asks for exactly that."
             ),
         ] = False,
         max_photos: Annotated[int, Field(ge=1, le=500)] = 200,
@@ -885,6 +930,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         upright_photos = []
         before: dict[str, dict[str, Any]] = {}  # geometry to put back if it goes wrong
         lens: dict[str, dict[str, Any]] = {}  # settings the lines found depend on
+        # The geometry and Geometry field from before Safelight's first correction, kept
+        # so that undo_straighten can put the photo back as it was.
+        originals: dict[str, tuple[dict[str, Any] | None, str | None]] = {}
         chosen_plans: dict[str, Plan] = {}
         validated: list[dict[str, Any]] = []  # the user approved their edits: never touched
         for photo in photos:
@@ -914,12 +962,19 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                     already.append({**entry, "reason": refusal["changed"]})
                 else:
                     not_done.append({**entry, "reason": refusal["reason"], "put_back": False})
+            elif (
+                photo.get("geometry_by") == "safelight"
+                and not settings.get("PerspectiveUpright")
+                and not replace_existing_upright
+            ):
+                already.append({**entry, "reason": TAKEN_OFF})
             elif settings.get("PerspectiveUpright") and not replace_existing_upright:
                 already.append(entry)
             elif settings.get("orientation") in (None, "", "AB"):
                 upright_photos.append(photo)
                 before[photo["uuid"]] = geometry_settings(settings)
                 lens[photo["uuid"]] = settings
+                originals[photo["uuid"]] = _original_geometry(photo, settings, store_home)
             else:
                 rotated.append(entry)
 
@@ -1040,8 +1095,9 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 return report([])
             raise ToolError(
                 f"Nothing to straighten: {len(already)} photos already have an Upright "
-                f"correction, {len(validated)} were validated by the user (never changed) and "
-                f"{len(rotated)} are rotated, which is not supported yet."
+                "correction or are left to the user by their Geometry field (see "
+                f"replace_existing_upright), {len(validated)} were validated by the user "
+                f"(never changed) and {len(rotated)} are rotated, which is not supported yet."
             )
         history = "Safelight: Straighten" + (" (chosen lines)" if chosen_lines else "")
 
@@ -1094,7 +1150,16 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             if not plan.lines:
                 return
             with contextlib.suppress(OSError, ValueError, KeyError):
-                straighten_store.save(photo_id, plan, lens.get(photo_id, {}), jpeg, store_home)
+                original, field_before = originals.get(photo_id, (None, None))
+                straighten_store.save(
+                    photo_id,
+                    plan,
+                    lens.get(photo_id, {}),
+                    jpeg,
+                    store_home,
+                    before=original,
+                    geometry_by_before=field_before,
+                )
 
         ids = [photo["uuid"] for photo in upright_photos]
         # From the reset on, photos have lost their geometry: whatever happens (no line
@@ -1233,114 +1298,164 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         Use it when a correction is wrong and choosing the lines (straighten_lines, then
         straighten_photos with chosen_lines) cannot fix it, instead of changing the
         transform with edit_develop. Each photo gets back the transform, Upright and crop it
-        had before Safelight straightened it; its Geometry field becomes "To straighten by
-        hand", so straighten_photos leaves it alone from then on, and it goes to the app's
-        list of photos to check. A photo that is already without any Upright correction
-        (put back by hand) only gets its Geometry field fixed. Its color label stays, so the
-        user finds it. Photos not straightened by Safelight, validated by the user, or
-        corrected again since are not touched.
+        had before Safelight first straightened it, and its Geometry field becomes "To
+        straighten by hand" (or "Corrected by you" again if it said so before), so
+        straighten_photos leaves it alone; it goes to the app's list of photos to check and
+        keeps its color label. A photo whose correction was already taken off by hand only
+        gets its field fixed (its crop from before stays as it is, see Lightroom's History).
+        Photos not straightened by Safelight, validated by the user, or corrected again
+        since are not touched. Running it again finishes what an interrupted run left.
         """
-        photos, _ = await list_photos(
+        photos, found = await list_photos(
             runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
         )
         if not photos:
             raise ToolError("No photos to put back.")
-        to_restore: dict[str, dict[str, Any]] = {}  # id -> geometry to write back
-        to_mark: list[dict[str, Any]] = []
+        status = await hub_client.status()
+        if (status.get("settings") or {}).get("confirm_threshold") == 0:
+            raise ToolError("undo_straighten needs a confirmation threshold of at least 1.")
+        restore: dict[str, tuple[dict[str, Any], str]] = {}  # id -> (geometry, field)
+        mark_only: dict[str, str] = {}  # id -> field
         skipped: list[dict[str, Any]] = []
         for photo in photos:
             entry = {"id": photo["uuid"], "file": photo.get("file_name")}
+            field_now = photo.get("geometry_by")
             if photo.get("validated"):
                 skipped.append({**entry, "reason": "validated by the user"})
                 continue
-            if photo.get("geometry_by") != "safelight":
+            if field_now not in ("safelight", "by_hand"):
                 skipped.append({**entry, "reason": "not straightened by Safelight"})
                 continue
             current = await runner.read(ctx, "develop.get", {"uuids": [photo["uuid"]]})
             settings = current.get("settings") or {}
             saved = straighten_store.load(photo["uuid"], hub_client.home)
-            if not settings.get("PerspectiveUpright"):
-                to_mark.append(photo)  # already without a correction: only the field
-            elif saved is None or not saved.is_current(settings):
-                skipped.append(
-                    {**entry, "reason": "its correction changed since Safelight wrote it"}
+            field = "user" if saved and saved.geometry_by_before == "user" else "by_hand"
+            if saved is not None and saved.is_current(settings):
+                if saved.before is None:
+                    skipped.append({**entry, "reason": NO_RECORD})
+                else:
+                    restore[photo["uuid"]] = (saved.before, field)
+            elif settings.get("PerspectiveUpright"):
+                reason = (
+                    NO_RECORD
+                    if saved is None and field_now == "safelight"
+                    else "its correction changed since Safelight wrote it"
                 )
-            elif saved.before is None:
-                skipped.append(
-                    {
-                        **entry,
-                        "reason": "Safelight kept no record of its settings from before: "
-                        "use Lightroom's History",
-                    }
-                )
+                skipped.append({**entry, "reason": reason})
+            elif saved is not None and saved.before is not None and _only_taken_off(settings):
+                restore[photo["uuid"]] = (saved.before, field)  # finishes an interrupted run
+            elif field_now == "by_hand":
+                skipped.append({**entry, "reason": "already left to the user"})
             else:
-                to_restore[photo["uuid"]] = saved.before
-                to_mark.append(photo)
-        if not to_mark:
+                mark_only[photo["uuid"]] = field
+        ids = [*restore, *mark_only]
+        notes = [
+            'their Geometry field now says "To straighten by hand" (or "Corrected by you" '
+            "when it said so before): straighten_photos leaves them alone, and they are in "
+            "the app's list of photos to check",
+            "their color label is kept so the user finds them",
+        ]
+        if found > len(photos):
+            notes.append(f"only the first {len(photos)} of {found} photos were looked at")
+        if not ids:
             return ActionResult(
-                state="succeeded", result={"put_back": [], "marked": [], "skipped": skipped}
+                state="succeeded",
+                result={
+                    "summary": {"put_back": 0, "marked_only": 0, "not_done": 0},
+                    "put_back": [],
+                    "marked_only": [],
+                    "not_done": [],
+                    "skipped": skipped,
+                    "notes": notes,
+                },
             )
-        # One approval for the batch, on the field every photo gets.
-        ids = [photo["uuid"] for photo in to_mark]
-        marked = await runner.change(
+        # One approval for the batch, on what changes for every photo: Safelight's
+        # correction is taken off. Each photo then gets its own settings from before. A
+        # photo stopped between the two steps is found again by the next run.
+        taken_off = await runner.change(
             ctx,
-            "metadata.set",
-            {"uuids": ids, "fields": {"geometry_by": "by_hand"}},
+            "develop.apply",
+            {
+                "uuids": ids,
+                "settings": {"PerspectiveUpright": 0},
+                "history_name": "Safelight: Put back",
+            },
             confirmation_token,
         )
-        if marked.state == "running" and marked.job_id:
-            marked = runner.outcome(
-                await runner.settle({"state": "running", "job_id": marked.job_id})
+        if taken_off.state == "running" and taken_off.job_id:
+            taken_off = runner.outcome(
+                await runner.settle({"state": "running", "job_id": taken_off.job_id})
             )
-        if marked.state != "succeeded":
-            return marked
-        failed_fields = {
-            failure.get("uuid") for failure in (marked.result or {}).get("failures") or []
+        if taken_off.state != "succeeded":
+            return taken_off
+        refused = {
+            failure.get("uuid"): failure.get("error")
+            for failure in (taken_off.result or {}).get("failures") or []
         }
+        by_id = {photo["uuid"]: photo for photo in photos}
         put_back: list[dict[str, Any]] = []
         only_marked: list[dict[str, Any]] = []
         not_done: list[dict[str, Any]] = []
-        for photo in to_mark:
-            entry = {"id": photo["uuid"], "file": photo.get("file_name")}
-            if photo["uuid"] in failed_fields:
-                not_done.append({**entry, "reason": "Lightroom refused to change its field"})
-                continue
-            if photo["uuid"] not in to_restore:
-                only_marked.append(entry)
-                continue
+        review: list[dict[str, Any]] = []
+
+        async def run_one(command: str, params: dict[str, Any]) -> str | None:
+            """Runs a command on one photo; returns what went wrong, or None."""
             reply = await runner.settle(
-                await hub_client.run(
-                    "develop.apply",
-                    {
-                        "uuids": [photo["uuid"]],
-                        "settings": to_restore[photo["uuid"]],
-                        "history_name": "Safelight: Put back",
-                    },
-                    wait_s=30,
-                    client=_client_name(ctx),
-                )
+                await hub_client.run(command, params, wait_s=30, client=_client_name(ctx))
             )
+            if reply.get("state") != JobState.SUCCEEDED:
+                return str((reply.get("error") or {}).get("message") or reply.get("state"))
             failures = (reply.get("result") or {}).get("failures") or []
-            if reply.get("state") == JobState.SUCCEEDED and not failures:
-                put_back.append(entry)
-                continue
-            error = failures[0].get("error") if failures else (reply.get("error") or {})
-            not_done.append({**entry, "reason": f"Lightroom refused it: {error}"})
-            await runner.settle(  # the field must not say it is left to the user
-                await hub_client.run(
-                    "metadata.set",
-                    {"uuids": [photo["uuid"]], "fields": {"geometry_by": "safelight"}},
-                    wait_s=30,
-                    client=_client_name(ctx),
-                )
-            )
-        items = [
-            {"id": e["id"], "file": e.get("file"), "reason": TO_DO_BY_HAND}
-            for e in (*put_back, *only_marked)
-        ]
-        if items:
-            with contextlib.suppress(HubUnavailable):
-                await hub_client.review(add=items)
+            return str(failures[0].get("error")) if failures else None
+
+        try:
+            for photo_id in ids:
+                entry = {"id": photo_id, "file": by_id[photo_id].get("file_name")}
+                if photo_id in refused:
+                    not_done.append(
+                        {**entry, "reason": f"Lightroom refused it: {refused[photo_id]}"}
+                    )
+                    continue
+                if photo_id in restore:
+                    geometry, field = restore[photo_id]
+                    params = {
+                        "uuids": [photo_id],
+                        "settings": geometry,
+                        "history_name": "Safelight: Put back",
+                    }
+                    error = await run_one("develop.apply", params)
+                    if error:
+                        not_done.append(
+                            {**entry, "reason": f"Lightroom refused it: {error}; run it again"}
+                        )
+                        continue
+                else:
+                    field = mark_only[photo_id]
+                fields = {"geometry_by": field}
+                error = await run_one("metadata.set", {"uuids": [photo_id], "fields": fields})
+                if error:
+                    not_done.append(
+                        {
+                            **entry,
+                            "reason": f"its Geometry field could not be changed: {error}",
+                        }
+                    )
+                    continue
+                if photo_id in restore:
+                    put_back.append(entry)
+                    review.append({**entry, "reason": TO_DO_BY_HAND})
+                else:
+                    only_marked.append(entry)
+                    review.append({**entry, "reason": TAKEN_OFF_BY_HAND})
+        finally:
+            if review:
+                with anyio.CancelScope(shield=True), contextlib.suppress(HubUnavailable):
+                    await hub_client.review(
+                        add=[
+                            {"id": e["id"], "file": e.get("file"), "reason": e["reason"]}
+                            for e in review
+                        ]
+                    )
         return ActionResult(
             state="succeeded",
             result={
@@ -1354,12 +1469,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                 "marked_only": only_marked,
                 "not_done": not_done,
                 "skipped": skipped,
-                "notes": [
-                    'their Geometry field is now "To straighten by hand": straighten_photos '
-                    "leaves them alone, and they are in the app's list of photos to check",
-                    "marked_only: they already had no Upright correction; only the field changed",
-                    "their color label is kept so the user finds them",
-                ],
+                "notes": notes,
             },
         )
 

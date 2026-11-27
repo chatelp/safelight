@@ -12,7 +12,7 @@ from mcp import Client
 
 from safelight import mcp_server, straighten_store
 from safelight.devtools.fake_catalog import FakeCatalog
-from safelight.devtools.fake_plugin import FakePlugin
+from safelight.devtools.fake_plugin import CommandError, FakePlugin
 from safelight.hub import Hub, HubServer
 from safelight.hub_client import HubClient
 from safelight.mcp_server import build_server
@@ -397,7 +397,7 @@ async def test_undo_straighten_puts_back_and_leaves_photos_to_the_user(safelight
             catalog.photos[i]["settings"].update(EARLIER)
         await mcp.call_tool("straighten_photos", {"photo_ids": ids})
         wrong, by_hand, moved, validated, kept = (catalog.photos[i] for i in ids)
-        by_hand["settings"]["PerspectiveUpright"] = 0  # the AI put it back itself
+        by_hand["settings"].update(PerspectiveUpright=0, CropTop=0.05)  # changed by hand
         moved["settings"]["UprightTransform_5"] = "1,0,0.01,0,1,0,0,0,1"  # the user moved it
         validated["validated"] = True
         args = {"photo_ids": [*ids[:4], "FAKE-0006"]}
@@ -407,6 +407,7 @@ async def test_undo_straighten_puts_back_and_leaves_photos_to_the_user(safelight
         _assert_put_back(wrong)  # the transform and crop from before
         assert [e["id"] for e in result["marked_only"]] == ["FAKE-0002"]
         assert by_hand["settings"]["PerspectiveUpright"] == 0
+        assert by_hand["settings"]["CropTop"] == 0.05  # what the user did stays
         assert wrong["geometry_by"] == by_hand["geometry_by"] == "by_hand"
         assert wrong["label"] == "purple"  # kept, so the user finds it
         assert moved["geometry_by"] == "safelight" and kept["geometry_by"] == "safelight"
@@ -420,6 +421,80 @@ async def test_undo_straighten_puts_back_and_leaves_photos_to_the_user(safelight
         again = await mcp.call_tool("straighten_photos", {"photo_ids": ids[:2]})
         assert again.is_error and "2 photos already" in again.content[0].text
         assert wrong["settings"]["PerspectiveUpright"] == 0  # left to the user
+
+
+async def test_undo_straighten_finishes_what_an_interrupted_run_left(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    real_apply = FakeCatalog.develop_apply
+    refuse = {"on": True}
+
+    async def flaky_apply(self, params, progress):
+        if refuse["on"] and "CropTop" in params["settings"] and not params.get("dry_run"):
+            raise CommandError("COMMAND_FAILED", "Lightroom is busy")
+        return await real_apply(self, params, progress)
+
+    monkeypatch.setattr(FakeCatalog, "develop_apply", flaky_apply)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        photo = catalog.photos["FAKE-0001"]
+        photo["settings"].update(EARLIER)
+        refuse["on"] = False
+        await mcp.call_tool("straighten_photos", {"photo_ids": ["FAKE-0001"]})
+        refuse["on"] = True
+        args = {"photo_ids": ["FAKE-0001"]}
+        first = (await mcp.call_tool("undo_straighten", args)).structured_content["result"]
+        assert "run it again" in first["not_done"][0]["reason"]
+        assert photo["settings"]["PerspectiveUpright"] == 0
+        assert photo["geometry_by"] == "safelight"  # not yet left to the user
+        check = await mcp.call_tool("straighten_photos", {**args, "check_only": True})
+        assert (
+            "taken off"
+            in check.structured_content["result"]["already_corrected_skipped"][0]["reason"]
+        )
+        refuse["on"] = False
+        again = (await mcp.call_tool("undo_straighten", args)).structured_content["result"]
+        assert [e["id"] for e in again["put_back"]] == ["FAKE-0001"]
+        _assert_put_back(photo)
+        assert photo["geometry_by"] == "by_hand"
+
+
+async def test_undo_straighten_goes_back_to_before_the_first_correction(
+    safelight_home, monkeypatch
+):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        first, mine = catalog.photos["FAKE-0001"], catalog.photos["FAKE-0002"]
+        first["settings"].update(EARLIER)
+        mine["settings"].update(EARLIER)
+        mine["geometry_by"] = "user"  # corrected by the user with sliders
+        ids = ["FAKE-0001", "FAKE-0002"]
+        await mcp.call_tool(
+            "straighten_photos", {"photo_ids": ids, "replace_existing_upright": True}
+        )
+        await mcp.call_tool(
+            "straighten_photos", {"photo_ids": ids, "replace_existing_upright": True}
+        )
+        await mcp.call_tool("straighten_photos", {"chosen_lines": {"FAKE-0001": [1, 2, 3, 4]}})
+        result = await mcp.call_tool("undo_straighten", {"photo_ids": ids})
+        assert result.structured_content["result"]["summary"]["put_back"] == 2
+        _assert_put_back(first)
+        _assert_put_back(mine)
+        assert first["geometry_by"] == "by_hand"
+        assert mine["geometry_by"] == "user"  # the user's own correction is back
+
+
+async def test_undo_straighten_needs_a_threshold(safelight_home):
+    async with (
+        lightroom(safelight_home, threshold=0) as _,
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        refused = await mcp.call_tool("undo_straighten", {"photo_ids": ["FAKE-0001"]})
+        assert refused.is_error and "threshold" in refused.content[0].text
 
 
 async def test_straighten_leaves_photos_the_user_corrects(safelight_home, monkeypatch):
