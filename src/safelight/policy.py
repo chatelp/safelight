@@ -75,6 +75,9 @@ DEFAULT_POLICIES: dict[str, CommandPolicy] = {
     "snapshots.apply": SINGLE,
     # Hard to undo: always confirmed.
     "collections.delete": DESTRUCTIVE,
+    # Run by the hub itself: Safelight's own collections, and the colors of validated photos.
+    "safelight.collections": SINGLE,
+    "safelight.tidy": SINGLE,
     "snapshots.delete": DESTRUCTIVE,
     "masks.delete": DESTRUCTIVE,
     # Development commands understood by safelight.devtools.fake_plugin.

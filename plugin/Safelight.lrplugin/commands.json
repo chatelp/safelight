@@ -25,6 +25,8 @@
     "collections.add": {"photos": true, "params": ["collection_id"]},
     "collections.remove_photos": {"photos": true, "params": ["collection_id"]},
     "collections.delete": {"params": ["collection_id"]},
+    "safelight.collections": {"params": ["set", "names"]},
+    "safelight.tidy": {"params": ["validated_label", "legacy_label", "check"]},
 
     "metadata.set": {"photos": true, "params": ["fields"]},
     "keywords.list": {"params": ["query", "limit"]},

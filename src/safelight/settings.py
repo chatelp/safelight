@@ -16,6 +16,18 @@ from typing import Any
 DEFAULT_CONFIRM_THRESHOLD = 50
 LABELS = ("red", "yellow", "green", "blue", "purple", "none")
 DEFAULT_CHANGE_LABEL = "purple"
+DEFAULT_BY_HAND_LABEL = "yellow"
+DEFAULT_VALIDATED_LABEL = "none"
+# Safelight's smart collections in Lightroom: the set, and one collection per state.
+DEFAULT_COLLECTIONS = {
+    "set": "Safelight",
+    "to_check": "To check",
+    "by_hand": "To straighten by hand",
+    "validated": "Validated",
+}
+MAX_COLLECTION_NAME = 60
+# The only color Safelight gave photos before it recorded its colors in the catalog.
+LEGACY_LABEL = "purple"
 MAX_LENS_NAMES = 50
 MAX_NAME_LENGTH = 120
 
@@ -26,9 +38,16 @@ class Settings:
     confirm_threshold: int = DEFAULT_CONFIRM_THRESHOLD
     # When true, every command that changes the catalog is refused.
     read_only: bool = False
-    # Color label Safelight gives the photos it changes, so the user can find and check
-    # them ("none": no label). A photo that already has another label keeps it.
+    # Color labels Safelight gives photos, by state ("none": no label): photos it changed,
+    # for the user to check; photos the user must straighten by hand; and what a photo's
+    # Safelight color becomes when the user validates it. Safelight only ever changes the
+    # colors it gave itself: a photo with a color of the user's keeps it.
     change_label: str = DEFAULT_CHANGE_LABEL
+    by_hand_label: str = DEFAULT_BY_HAND_LABEL
+    validated_label: str = DEFAULT_VALIDATED_LABEL
+    # Names of Safelight's smart collections in Lightroom (set, to_check, by_hand,
+    # validated); "" for a collection Safelight does not create.
+    collections: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_COLLECTIONS))
     # Whether Safelight saves a snapshot before changing a photo's geometry.
     snapshots: bool = True
     # Lenses Lightroom names wrongly (adapted or manual lenses): what Lightroom reads, and
@@ -66,10 +85,12 @@ class Settings:
             if not isinstance(value, bool):
                 raise ValueError("read_only must be true or false")
             self.read_only = value
-        elif key == "change_label":
+        elif key in ("change_label", "by_hand_label", "validated_label"):
             if value not in LABELS:
-                raise ValueError(f"change_label must be one of {', '.join(LABELS)}")
-            self.change_label = value
+                raise ValueError(f"{key} must be one of {', '.join(LABELS)}")
+            setattr(self, key, value)
+        elif key == "collections":
+            self.collections = _collections(value, self.collections)
         elif key == "snapshots":
             if not isinstance(value, bool):
                 raise ValueError("snapshots must be true or false")
@@ -106,6 +127,23 @@ class Settings:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _collections(value: Any, current: dict[str, str]) -> dict[str, str]:
+    """Collection names: a partial change keeps the other names."""
+    if not isinstance(value, dict) or not set(value) <= set(DEFAULT_COLLECTIONS):
+        raise ValueError(f"collections must name some of {', '.join(DEFAULT_COLLECTIONS)}")
+    out = {**DEFAULT_COLLECTIONS, **current}
+    for key, name in value.items():
+        if not isinstance(name, str) or len(name.strip()) > MAX_COLLECTION_NAME:
+            raise ValueError(f"collection names are at most {MAX_COLLECTION_NAME} characters")
+        if key == "set" and not name.strip():
+            raise ValueError("the collection set needs a name")
+        out[key] = name.strip()
+    names = [out[key] for key in ("to_check", "by_hand", "validated") if out[key]]
+    if len(names) != len(set(names)):
+        raise ValueError("each collection needs its own name")
+    return out
 
 
 def _lens_names(value: Any) -> list[dict[str, str]]:

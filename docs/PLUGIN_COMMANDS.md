@@ -57,12 +57,14 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 | `collections.create` | S | `name`, `parent_id`, `kind` (`collection`, `collection_set`, `smart_collection`), `search` | the new collection |
 | `collections.add` / `collections.remove_photos` | M | `collection_id`, photos | count |
 | `collections.delete` | D | `collection_id` | deletes the collection (photos stay in the catalog) |
+| `safelight.collections` | S | `set`, `names` (`to_check`, `by_hand`, `validated`; `""` for none) | creates Safelight's collection set and smart collections, or renames them (found again by id, kept per catalog in the plugin's preferences); run by the hub |
+| `safelight.tidy` | S | `validated_label`, `legacy_label`, `check` (photo ids) | photos the user validated lose the color Safelight gave them (or get `validated_label`); a color the user changed since is recorded as theirs; photos marked before Safelight recorded its colors count as its own with its Geometry field and `legacy_label`; answers `changed` and which of `check` are validated; run by the hub every half minute |
 
 ## Metadata and keywords
 
 | Command | Policy | Params | Answer |
 |---|---|---|---|
-| `metadata.set` | M | photos, `fields`: `rating` (0–5), `pick` (−1, 0, 1), `label` (`red`…`purple`, `none`), `title`, `caption`, `headline`, `copyright`, `creator`, `location`, `city`, `state`, `country`, `country_code`, `event`, `alt_text`, `extended_description`, `gps` (`{latitude, longitude}` or `false`), `gps_altitude`; Safelight's fields `validated` (true/false), `geometry_by` (`safelight`, `user`, `by_hand`, `none`), `reject_reason` (`""` clears it) | batch result |
+| `metadata.set` | M | photos, `fields`: `rating` (0–5), `pick` (−1, 0, 1), `label` (`red`…`purple`, `none`), `title`, `caption`, `headline`, `copyright`, `creator`, `location`, `city`, `state`, `country`, `country_code`, `event`, `alt_text`, `extended_description`, `gps` (`{latitude, longitude}` or `false`), `gps_altitude`; Safelight's fields `validated` (true/false), `geometry_by` (`safelight`, `user`, `by_hand`, `none`), `reject_reason` (`""` clears it), `safelight_label` (the color Safelight gave the photo, or `user` once the user changed it; hidden in Lightroom; `none` clears it) | batch result |
 | `keywords.list` | R | `query`, `limit` | keyword paths (`A > B > C`) |
 | `keywords.add` | M | photos, `keywords` (paths; missing ones are created) | batch result, `keywords_not_created` |
 | `keywords.remove` | M | photos, `keywords` (a name matches anywhere, a path exactly) | batch result, `keywords_not_found` |

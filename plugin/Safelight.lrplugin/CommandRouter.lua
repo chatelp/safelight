@@ -83,12 +83,14 @@ register("collections.create", Catalog.createCollection)
 register("collections.add", Catalog.addToCollection)
 register("collections.remove_photos", Catalog.removeFromCollection)
 register("collections.delete", Catalog.deleteCollection)
+register("safelight.collections", Catalog.safelightCollections)
 
 -- Metadata and keywords.
 register("metadata.set", Metadata.set)
 register("keywords.list", Metadata.listKeywords)
 register("keywords.add", Metadata.addKeywords)
 register("keywords.remove", Metadata.removeKeywords)
+register("safelight.tidy", Metadata.tidy)
 
 -- Develop.
 register("develop.get", Develop.get)

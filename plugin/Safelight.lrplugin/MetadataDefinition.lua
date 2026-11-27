@@ -3,7 +3,9 @@
 --   geometry   who corrected the perspective last: Safelight, or the user; or that
 --              Safelight put it back and the user straightens it by hand;
 --   validated  the user approved the photo's edits: Safelight never changes them;
---   rejectReason  why the photo was rejected (duplicate, passer-by, flare...).
+--   rejectReason  why the photo was rejected (duplicate, passer-by, flare...);
+--   safelightLabel  (hidden) the color label Safelight gave the photo, or "user" once
+--              the user changed it, so that Safelight only ever changes its own colors.
 -- Changing these definitions needs a new schemaVersion; Lightroom then asks once to
 -- update the catalog.
 return {
@@ -39,6 +41,11 @@ return {
             browsable = true,
             searchable = true,
         },
+        {
+            -- No title: not shown in the Metadata panel.
+            id = "safelightLabel",
+            dataType = "string",
+        },
     },
-    schemaVersion = 2,
+    schemaVersion = 3,
 }

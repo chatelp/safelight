@@ -28,6 +28,9 @@ end
 -- catalog for them, reading fails: no photo can be validated yet, so it then has none.
 -- LrTasks.pcall, not pcall: SDK calls may yield, which a plain pcall turns into an error.
 Photos.FIELDS = { "geometry", "validated", "rejectReason" }
+-- Read on its own: a field added later must not hide the others before Lightroom has
+-- updated the catalog for it.
+Photos.LATER_FIELDS = { "safelightLabel" }
 
 function Photos.isValidated(photo)
     local ok, value = LrTasks.pcall(function()
@@ -40,15 +43,27 @@ function Photos.isValidated(photo)
     return value == "yes"
 end
 
-local function safelightFields(catalog, photos)
+local function readFields(catalog, photos, fields)
     local ok, values = LrTasks.pcall(function()
-        return catalog:batchGetPropertyForPlugin(photos, _PLUGIN.id, Photos.FIELDS)
+        return catalog:batchGetPropertyForPlugin(photos, _PLUGIN.id, fields)
     end)
     if not ok then
         Logger.error("Could not read Safelight's fields: " .. tostring(values))
         return {}
     end
     return values or {}
+end
+
+local function safelightFields(catalog, photos)
+    local values = readFields(catalog, photos, Photos.FIELDS)
+    local later = readFields(catalog, photos, Photos.LATER_FIELDS)
+    for photo, fields in pairs(later) do
+        values[photo] = values[photo] or {}
+        for key, value in pairs(fields) do
+            values[photo][key] = value
+        end
+    end
+    return values
 end
 
 -- Resolves the photos a command works on:
@@ -144,6 +159,7 @@ function Photos.summaries(photos)
             validated = s.validated == "yes",
             geometry_by = nonEmpty(s.geometry),
             reject_reason = nonEmpty(s.rejectReason),
+            safelight_label = nonEmpty(s.safelightLabel),
         }
     end
     return out

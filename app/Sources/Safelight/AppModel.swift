@@ -218,6 +218,27 @@ final class AppModel {
 
     func setSnapshots(_ value: Bool) { save(.init(snapshots: value)) }
 
+    func setByHandLabel(_ value: String) {
+        guard HubSettings.labels.contains(value) else { return }
+        save(.init(byHandLabel: value))
+    }
+
+    func setValidatedLabel(_ value: String) {
+        guard HubSettings.labels.contains(value) else { return }
+        save(.init(validatedLabel: value))
+    }
+
+    func setCollections(_ value: HubSettings.Collections) {
+        let trimmed = HubSettings.Collections(
+            set: value.set.trimmingCharacters(in: .whitespaces),
+            toCheck: value.toCheck.trimmingCharacters(in: .whitespaces),
+            byHand: value.byHand.trimmingCharacters(in: .whitespaces),
+            validated: value.validated.trimmingCharacters(in: .whitespaces)
+        )
+        guard !trimmed.set.isEmpty, trimmed != settings?.collections else { return }
+        save(.init(collections: trimmed))
+    }
+
     func addLensName(lightroom: String, real: String) {
         guard var names = settings?.lensNames else { return }
         let lens = HubSettings.LensName(

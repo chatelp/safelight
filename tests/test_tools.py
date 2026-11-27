@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from mcp import Client
 
+from safelight import hub as hub_module
 from safelight import mcp_server, straighten_store
 from safelight.devtools.fake_catalog import FakeCatalog
 from safelight.devtools.fake_plugin import CommandError, FakePlugin
@@ -409,7 +410,7 @@ async def test_undo_straighten_puts_back_and_leaves_photos_to_the_user(safelight
         assert by_hand["settings"]["PerspectiveUpright"] == 0
         assert by_hand["settings"]["CropTop"] == 0.05  # what the user did stays
         assert wrong["geometry_by"] == by_hand["geometry_by"] == "by_hand"
-        assert wrong["label"] == "purple"  # kept, so the user finds it
+        assert wrong["label"] == "yellow"  # Safelight's color for photos to do by hand
         assert moved["geometry_by"] == "safelight" and kept["geometry_by"] == "safelight"
         reasons = {e["id"]: e["reason"] for e in result["skipped"]}
         assert "changed since" in reasons["FAKE-0003"]
@@ -540,6 +541,109 @@ async def test_undo_straighten_respects_what_happened_since(safelight_home, monk
         assert second["summary"]["put_back"] == 0
         assert second["skipped"][0]["reason"] == "already put back"
         assert twice["settings"] == before
+
+
+async def _until(condition, seconds=5.0):
+    for _ in range(int(seconds / 0.05)):
+        if condition():
+            return True
+        await asyncio.sleep(0.05)
+    return False
+
+
+async def test_colors_follow_the_state_and_only_safelight_s_own(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    monkeypatch.setattr(hub_module, "UPKEEP_EVERY_S", 0.1)
+    async with (
+        lightroom(safelight_home) as (catalog, client),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        ids = ["FAKE-0001", "FAKE-0002", "FAKE-0003", "FAKE-0004"]
+        mine = catalog.photos["FAKE-0004"]
+        mine["label"] = "green"  # the user's own color
+        await mcp.call_tool("straighten_photos", {"photo_ids": ids})
+        done, to_redo, old, _ = (catalog.photos[i] for i in ids)
+        assert done["label"] == "purple" and done["safelight_label"] == "purple"
+        assert mine["label"] == "green" and mine["safelight_label"] == "user"
+        old["safelight_label"] = None  # marked by a Safelight that kept no record of it
+
+        await mcp.call_tool(
+            "undo_straighten", {"photo_ids": ["FAKE-0002", "FAKE-0003", "FAKE-0004"]}
+        )
+        assert to_redo["label"] == "yellow" and old["label"] == "yellow"
+        assert mine["label"] == "green"  # never changed
+
+        await client.review(add=[{"id": "FAKE-0001", "reason": "check it"}])
+        done["validated"] = True  # the user ticks Validated in Lightroom
+        assert await _until(lambda: done["label"] is None)
+        assert done["safelight_label"] is None
+        review = (await client.review())["review"]
+        assert "FAKE-0001" not in {e["id"] for e in review}
+        assert {"FAKE-0002", "FAKE-0003"} <= {e["id"] for e in review}  # still to do by hand
+
+
+async def test_a_color_of_the_user_s_is_never_taken(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    monkeypatch.setattr(hub_module, "UPKEEP_EVERY_S", 0.1)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        ids = ["FAKE-0001", "FAKE-0002", "FAKE-0003"]
+        await mcp.call_tool("straighten_photos", {"photo_ids": ids})
+        yellow, cleared, legacy = (catalog.photos[i] for i in ids)
+        # Marked by an older Safelight, with the user's own yellow (it kept other colors).
+        yellow.update(label="yellow", safelight_label=None)
+        # Safelight's purple removed by the user, then purple given again by hand.
+        cleared.update(label="purple")  # its record still says purple...
+        legacy.update(safelight_label=None)  # an older Safelight's purple
+        await mcp.call_tool("undo_straighten", {"photo_ids": ["FAKE-0001"]})
+        assert yellow["label"] == "yellow" and yellow["safelight_label"] == "user"
+        cleared["label"] = None  # the user takes the color off...
+        assert await _until(lambda: cleared["safelight_label"] == "user")  # ...it is noted
+        cleared.update(label="purple", validated=True)  # ...and later gives purple again
+        legacy["validated"] = True
+        assert await _until(lambda: legacy["label"] is None)  # Safelight's old purple goes
+        assert cleared["label"] == "purple"  # the user's purple stays
+
+
+async def test_safelight_collections_follow_the_settings(safelight_home):
+    async with lightroom(safelight_home) as (catalog, client):
+        assert await _until(lambda: catalog.safelight_set is not None)
+        assert catalog.safelight_set == {
+            "set": "Safelight",
+            "to_check": "To check",
+            "by_hand": "To straighten by hand",
+            "validated": "Validated",
+        }
+        await client.settings({"collections": {"to_check": "À vérifier"}})
+        assert await _until(lambda: catalog.safelight_set["to_check"] == "À vérifier")
+
+
+async def test_upkeep_waits_after_a_failure(safelight_home, monkeypatch):
+    monkeypatch.setattr(hub_module, "UPKEEP_BACKOFF_S", 0.5)
+    calls = {"collections": 0}
+    real = FakeCatalog.safelight_collections
+
+    async def busy_once(self, params, progress):
+        calls["collections"] += 1
+        if calls["collections"] == 1:
+            raise CommandError("COMMAND_FAILED", "Lightroom is busy")
+        return await real(self, params, progress)
+
+    monkeypatch.setattr(FakeCatalog, "safelight_collections", busy_once)
+    async with lightroom(safelight_home) as (catalog, _):
+        assert await _until(lambda: catalog.safelight_set is not None, 6)
+        assert calls["collections"] == 2  # tried again after the pause, then not again
+
+
+async def test_no_upkeep_in_read_only_mode(safelight_home, monkeypatch):
+    monkeypatch.setattr(hub_module, "UPKEEP_EVERY_S", 0.1)
+    async with lightroom(safelight_home, read_only=True) as (catalog, _):
+        catalog.photos["FAKE-0001"].update(validated=True, label="purple", safelight_label="purple")
+        await asyncio.sleep(3)  # three upkeep rounds
+        assert catalog.safelight_set is None
+        assert catalog.photos["FAKE-0001"]["label"] == "purple"
 
 
 async def test_undo_straighten_needs_a_threshold(safelight_home):
@@ -686,7 +790,7 @@ async def test_straighten_lines_then_chosen_lines(safelight_home, monkeypatch):
         result = (await mcp.call_tool("straighten_photos", args)).structured_content["result"]
         assert [e["lines"] for e in result["straightened"]] == [[1, 2, 3, 4]]
         assert result["straightened"][0]["model"] == "exact"
-        assert result["straightened"][0]["label"] == "kept purple"
+        assert result["straightened"][0]["label"] == "yellow"  # its own color: changed
         assert photo["settings"]["UprightFourSegmentsCount"] == 4
 
         # The new choice is remembered, and can be changed again.

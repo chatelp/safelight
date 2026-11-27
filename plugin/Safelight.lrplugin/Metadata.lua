@@ -1,4 +1,5 @@
 -- Metadata and keyword commands.
+local LrTasks = import "LrTasks"
 local Batch = require "Batch"
 local Photos = require "Photos"
 local Result = require "Result"
@@ -41,6 +42,11 @@ local FIELDS = {
     end, convert = function(v) return v ~= "none" and v or nil end },
     reject_reason = { plugin = "rejectReason", valid = isString,
         convert = function(v) return v ~= "" and v or nil end },
+    -- The color Safelight gave the photo; "user": its color is the user's.
+    safelight_label = { plugin = "safelightLabel", valid = function(v)
+        return v == "red" or v == "yellow" or v == "green" or v == "blue" or v == "purple"
+            or v == "user" or v == "none"
+    end, convert = function(v) return v ~= "none" and v or nil end },
 }
 
 local function fieldNames()
@@ -92,6 +98,85 @@ function Metadata.set(params, job)
         return Result.stoppedBatch(result)
     end
     return result
+end
+
+-- safelight.tidy {validated_label, legacy_label, check?}: photos the user validated lose
+-- the color Safelight gave them (or get `validated_label`), and Safelight forgets it; a
+-- color the user changed since is left alone, and recorded as the user's ("user").
+-- Photos marked before Safelight recorded its colors count as Safelight's when they have
+-- its Geometry field and `legacy_label`. `check`: photo ids, of which the validated ones
+-- are returned (for the app's list of photos to check).
+local COLORS = { red = true, yellow = true, green = true, blue = true, purple = true, none = true }
+
+local function photosWith(catalog, field)
+    local ok, found = LrTasks.pcall(function()
+        return catalog:findPhotosWithProperty(_PLUGIN.id, field)
+    end)
+    return ok and found or {}
+end
+
+function Metadata.tidy(params)
+    if not COLORS[params.validated_label] or not COLORS[params.legacy_label] then
+        error("validated_label and legacy_label must be colors or none")
+    end
+    local catalog = Photos.catalog()
+    local found, seen = {}, {}
+    for _, field in ipairs({ "safelightLabel", "validated" }) do
+        for _, photo in ipairs(photosWith(catalog, field)) do
+            if not seen[photo] then
+                seen[photo] = true
+                found[#found + 1] = photo
+            end
+        end
+    end
+    local changes = {}
+    if #found > 0 then
+        local okOwn, own = LrTasks.pcall(function()
+            return catalog:batchGetPropertyForPlugin(found, _PLUGIN.id,
+                { "validated", "geometry", "safelightLabel" })
+        end)
+        own = okOwn and own or {}
+        local raw = catalog:batchGetRawMetadata(found, { "colorNameForLabel" }) or {}
+        for _, photo in ipairs(found) do
+            local fields = own[photo] or {}
+            local label = (raw[photo] or {}).colorNameForLabel
+            local mine = fields.safelightLabel
+            if not mine and (fields.geometry == "safelight" or fields.geometry == "by_hand") then
+                mine = params.legacy_label ~= "none" and params.legacy_label or nil
+                if label ~= mine then
+                    mine = nil -- not a color Safelight gave
+                end
+            end
+            if fields.safelightLabel == "user" then
+                mine = nil -- the user's color
+            elseif fields.safelightLabel and label ~= fields.safelightLabel then
+                changes[#changes + 1] = { photo = photo, record = "user" }
+            elseif mine and fields.validated == "yes" then
+                changes[#changes + 1] = { photo = photo, color = mine }
+            end
+        end
+    end
+    local changed = {}
+    if #changes > 0 then
+        Batch.writeOnce("Safelight: Validated", function()
+            for _, change in ipairs(changes) do
+                -- Checked again in the gate: the user may have changed it meanwhile.
+                if change.color and change.photo:getRawMetadata("colorNameForLabel") == change.color then
+                    change.photo:setRawMetadata("colorNameForLabel", params.validated_label)
+                    changed[#changed + 1] = Photos.uuid(change.photo)
+                end
+                change.photo:setPropertyForPlugin(_PLUGIN, "safelightLabel", change.record)
+            end
+        end)
+    end
+    local validated = {}
+    for _, uuid in ipairs(type(params.check) == "table" and params.check or {}) do
+        local photo = catalog:findPhotoByUuid(tostring(uuid))
+        if photo and Photos.isValidated(photo) then
+            validated[#validated + 1] = tostring(uuid)
+        end
+    end
+    return { changed = changed, validated = validated }
 end
 
 -- -- Keywords ----------------------------------------------------------------------------
