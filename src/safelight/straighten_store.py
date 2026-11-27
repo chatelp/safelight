@@ -11,6 +11,7 @@ The folder is readable by the user only, and what is older than `KEEP_DAYS` is r
 
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -116,6 +117,8 @@ def save(
     if jpeg is None:
         data = json.loads(data_path.read_text())
         data.update(guide_lines=plan.guide_lines, matrix=matrix)
+        with contextlib.suppress(OSError):  # the preview is forgotten with the record
+            os.utime(folder / f"{_name(photo_id)}.jpg")
     else:
         (folder / f"{_name(photo_id)}.jpg").write_bytes(_small_jpeg(jpeg))
         data = {

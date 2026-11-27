@@ -214,7 +214,10 @@ class FakeCatalog:
     async def develop_apply(self, params: dict[str, Any], progress: Progress) -> Any:
         photos = self._resolve(params)
         if params.get("dry_run"):
-            return self._plan(photos, f"Change develop settings on {len(photos)} photos")
+            action = (params.get("history_name") or "Change develop settings").removeprefix(
+                "Safelight: "
+            )
+            return self._plan(photos, f"{action} on {len(photos)} photos")
         for index, photo in enumerate(photos):
             await progress(index, len(photos), "Develop")
             snapshot = params.get("snapshot")

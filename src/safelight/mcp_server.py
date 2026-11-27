@@ -50,6 +50,10 @@ TAKEN_OFF_BY_HAND = (
     "Guided), then set its Geometry field to Corrected by you. Its crop from before was not "
     "put back (see Lightroom's History)"
 )
+RECROPPED = (
+    "the user changed its crop or transform since Safelight straightened it: not touched "
+    "(use Lightroom's History)"
+)
 NO_RECORD = (
     "Safelight no longer has its settings from before (it keeps them 90 days, and older "
     "versions did not): use Lightroom's History, or the snapshot 'Before Safelight "
@@ -75,18 +79,32 @@ def _original_geometry(
     in which case those Safelight kept from before it (None when it kept none)."""
     if photo.get("geometry_by") == "safelight":
         prior = straighten_store.load(photo["uuid"], home)
-        if prior is not None and prior.is_current(settings):
+        if prior is not None:
             return prior.before, prior.geometry_by_before
-        if prior is None and settings.get("PerspectiveUpright") == 5:
+        if settings.get("PerspectiveUpright") == 5:
             return None, None  # Safelight's correction, kept no longer: unknown
     return geometry_settings(settings), photo.get("geometry_by")
 
 
+def _same(a: Any, b: Any) -> bool:
+    if isinstance(a, int | float) and isinstance(b, int | float):
+        return abs(a - b) < 1e-6
+    return a == b
+
+
+def _left_as_straightened(settings: dict[str, Any]) -> bool:
+    """Whether a photo's crop and transform sliders are as straighten_photos left them."""
+    return all(_same(settings.get(k, v), v) for k, v in _LEFT_BY_STRAIGHTEN.items())
+
+
 def _only_taken_off(settings: dict[str, Any]) -> bool:
     """Whether a photo is as straighten_photos left it, except that its Upright is off."""
-    return not settings.get("PerspectiveUpright") and all(
-        settings.get(key, value) == value for key, value in _LEFT_BY_STRAIGHTEN.items()
-    )
+    return not settings.get("PerspectiveUpright") and _left_as_straightened(settings)
+
+
+def _same_geometry(settings: dict[str, Any], geometry: dict[str, Any]) -> bool:
+    """Whether a photo has this transform, Upright and crop (other keys are ignored)."""
+    return all(_same(settings.get(key, value), value) for key, value in geometry.items())
 
 
 # How long a change waits for the user's answer in the Safelight app before the AI
@@ -886,7 +904,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         horizontal guides it is made exact, like Lightroom's own. Corners left empty by the
         correction are not cropped. Rotated photos are skipped, and so are photos that
         already have an Upright correction (it may be the user's own work) and photos whose
-        Geometry field says the user corrected them or straightens them by hand. A photo that
+        Geometry field says the user corrected them or straightens them by hand, or whose
+        Safelight correction was taken off (undo_straighten leaves those to the user). A photo that
         cannot be straightened gets its earlier transform and crop back.
 
         The lines found automatically are sometimes wrong (shadows, lines inside prints,
@@ -1301,10 +1320,10 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         had before Safelight first straightened it, and its Geometry field becomes "To
         straighten by hand" (or "Corrected by you" again if it said so before), so
         straighten_photos leaves it alone; it goes to the app's list of photos to check and
-        keeps its color label. A photo whose correction was already taken off by hand only
-        gets its field fixed (its crop from before stays as it is, see Lightroom's History).
-        Photos not straightened by Safelight, validated by the user, or corrected again
-        since are not touched. Running it again finishes what an interrupted run left.
+        keeps its color label. A photo whose correction was taken off by hand is put back
+        too, unless it was changed further (re-cropped...): then only its field changes.
+        Photos not straightened by Safelight, validated by the user, re-cropped or corrected
+        again since are not touched. Running it again finishes what an interrupted run left.
         """
         photos, found = await list_photos(
             runner, ctx, photo_ids=photo_ids, scope=scope, filters=filters, limit=max_photos
@@ -1315,7 +1334,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         if (status.get("settings") or {}).get("confirm_threshold") == 0:
             raise ToolError("undo_straighten needs a confirmation threshold of at least 1.")
         restore: dict[str, tuple[dict[str, Any], str]] = {}  # id -> (geometry, field)
-        mark_only: dict[str, str] = {}  # id -> field
+        mark_only: dict[str, tuple[str, str]] = {}  # id -> (field, why, for the app)
         skipped: list[dict[str, Any]] = []
         for photo in photos:
             entry = {"id": photo["uuid"], "file": photo.get("file_name")}
@@ -1330,24 +1349,31 @@ def build_server(client: HubClient | None = None) -> MCPServer:
             settings = current.get("settings") or {}
             saved = straighten_store.load(photo["uuid"], hub_client.home)
             field = "user" if saved and saved.geometry_by_before == "user" else "by_hand"
-            if saved is not None and saved.is_current(settings):
+            if (
+                saved is not None
+                and saved.before is not None
+                and _same_geometry(settings, saved.before)
+            ):
+                if field_now == "safelight":  # put back, but its field was not changed
+                    mark_only[photo["uuid"]] = (field, TO_DO_BY_HAND)
+                else:
+                    skipped.append({**entry, "reason": "already put back"})
+            elif saved is not None and saved.is_current(settings):
                 if saved.before is None:
                     skipped.append({**entry, "reason": NO_RECORD})
+                elif not _left_as_straightened(settings):
+                    skipped.append({**entry, "reason": RECROPPED})
                 else:
                     restore[photo["uuid"]] = (saved.before, field)
+            elif field_now == "by_hand":
+                skipped.append({**entry, "reason": "already left to the user"})
             elif settings.get("PerspectiveUpright"):
-                reason = (
-                    NO_RECORD
-                    if saved is None and field_now == "safelight"
-                    else "its correction changed since Safelight wrote it"
-                )
+                reason = NO_RECORD if saved is None else "its correction changed since"
                 skipped.append({**entry, "reason": reason})
             elif saved is not None and saved.before is not None and _only_taken_off(settings):
                 restore[photo["uuid"]] = (saved.before, field)  # finishes an interrupted run
-            elif field_now == "by_hand":
-                skipped.append({**entry, "reason": "already left to the user"})
             else:
-                mark_only[photo["uuid"]] = field
+                mark_only[photo["uuid"]] = (field, TAKEN_OFF_BY_HAND)
         ids = [*restore, *mark_only]
         notes = [
             'their Geometry field now says "To straighten by hand" (or "Corrected by you" '
@@ -1430,7 +1456,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                         )
                         continue
                 else:
-                    field = mark_only[photo_id]
+                    field = mark_only[photo_id][0]
                 fields = {"geometry_by": field}
                 error = await run_one("metadata.set", {"uuids": [photo_id], "fields": fields})
                 if error:
@@ -1446,7 +1472,7 @@ def build_server(client: HubClient | None = None) -> MCPServer:
                     review.append({**entry, "reason": TO_DO_BY_HAND})
                 else:
                     only_marked.append(entry)
-                    review.append({**entry, "reason": TAKEN_OFF_BY_HAND})
+                    review.append({**entry, "reason": mark_only[photo_id][1]})
         finally:
             if review:
                 with anyio.CancelScope(shield=True), contextlib.suppress(HubUnavailable):

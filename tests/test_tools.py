@@ -488,6 +488,60 @@ async def test_undo_straighten_goes_back_to_before_the_first_correction(
         assert mine["geometry_by"] == "user"  # the user's own correction is back
 
 
+async def test_undo_straighten_respects_what_happened_since(safelight_home, monkeypatch):
+    monkeypatch.setattr(mcp_server, "plan_from_jpeg", _found_plan)
+    real_set = FakeCatalog.metadata_set
+    refuse = {"on": False}
+
+    async def flaky_set(self, params, progress):
+        if refuse["on"] and not params.get("dry_run"):
+            raise CommandError("COMMAND_FAILED", "Lightroom is busy")
+        return await real_set(self, params, progress)
+
+    monkeypatch.setattr(FakeCatalog, "metadata_set", flaky_set)
+    async with (
+        lightroom(safelight_home) as (catalog, _),
+        Client(build_server(HubClient(safelight_home))) as mcp,
+    ):
+        ids = ["FAKE-0001", "FAKE-0002", "FAKE-0003", "FAKE-0004"]
+        for i in ids:
+            catalog.photos[i]["settings"].update(EARLIER)
+        await mcp.call_tool("straighten_photos", {"photo_ids": ids})
+        taken_off, recropped, field_failed, twice = (catalog.photos[i] for i in ids)
+
+        # A: correction taken off, then straightened again: undo still goes to EARLIER.
+        taken_off["settings"]["PerspectiveUpright"] = 0
+        args = {"photo_ids": ["FAKE-0001"], "replace_existing_upright": True}
+        await mcp.call_tool("straighten_photos", args)
+        # C: the user cropped the empty corners: not touched.
+        recropped["settings"].update(CropTop=0.1, CropLeft=0.1)
+        kept = dict(recropped["settings"])
+        result = await mcp.call_tool("undo_straighten", {"photo_ids": ids[:2]})
+        result = result.structured_content["result"]
+        _assert_put_back(taken_off)
+        assert recropped["settings"] == kept and recropped["geometry_by"] == "safelight"
+        assert "crop" in result["skipped"][0]["reason"]
+
+        # B: put back, but the field failed: the next run only sets the field.
+        refuse["on"] = True
+        await mcp.call_tool("undo_straighten", {"photo_ids": ["FAKE-0003"]})
+        refuse["on"] = False
+        _assert_put_back(field_failed)
+        assert field_failed["geometry_by"] == "safelight"
+        again = await mcp.call_tool("undo_straighten", {"photo_ids": ["FAKE-0003"]})
+        assert [e["id"] for e in again.structured_content["result"]["marked_only"]] == ["FAKE-0003"]
+        assert field_failed["geometry_by"] == "by_hand"
+
+        # D: running it twice changes nothing the second time.
+        await mcp.call_tool("undo_straighten", {"photo_ids": ["FAKE-0004"]})
+        before = dict(twice["settings"])
+        second = await mcp.call_tool("undo_straighten", {"photo_ids": ["FAKE-0004"]})
+        second = second.structured_content["result"]
+        assert second["summary"]["put_back"] == 0
+        assert second["skipped"][0]["reason"] == "already put back"
+        assert twice["settings"] == before
+
+
 async def test_undo_straighten_needs_a_threshold(safelight_home):
     async with (
         lightroom(safelight_home, threshold=0) as _,
