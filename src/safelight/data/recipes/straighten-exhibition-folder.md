@@ -25,7 +25,10 @@ folder "{folder}", the way the user expects.
      of the photo, plus the top and bottom edges of one work facing the camera when there
      is one: with four guides the correction is exact.
    - never choose shadows under panels, lines printed inside the photos, ceiling rails or
-     lights that are not on the wall, or short segments;
+     lights that are not on the wall, or short segments; nor the edges of prints standing
+     on a shelf or ledge: they lean back, so they are not vertical. When a view has mostly
+     such prints and few true verticals (wall corners, door frames), the automatic
+     correction turns it wrongly: leave it to the user;
    - call straighten_photos again with chosen_lines. For photos listed in left_to_user,
      tell the user: they draw the guides in Lightroom (Transform panel, Guided).
 7. Thin white or black borders on HDR merges come from merging without Lightroom's Auto

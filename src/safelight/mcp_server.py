@@ -1216,7 +1216,8 @@ def build_server(client: HubClient | None = None) -> MCPServer:
         horizontals in orange, the guides in use thicker in magenta. Choose by eye: the
         long edges of things flat on the wall (frames, panels, prints) and of walls, pillars
         and doors. Never shadows, lines inside a printed photo, ceiling rails or lights that
-        are not on the wall, cables, or short pieces. Take two verticals far apart, one on
+        are not on the wall, cables, short pieces, or the edges of prints standing on a
+        shelf (they lean back). Take two verticals far apart, one on
         each side, and when the view faces the wall, two horizontals: the top and bottom
         edges of works hung on it. Then call straighten_photos with chosen_lines. For a
         view along a wall (receding), or when unsure of the verticals, leave the photo to
