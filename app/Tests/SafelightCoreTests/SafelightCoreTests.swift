@@ -262,8 +262,6 @@ private func temporaryHome() throws -> URL {
         .contains("\"state\":\"to_check\""))
     #expect(try encode(LibraryParams.Validate(uuids: ["A"], fields: .init(validated: true)))
         .contains("\"fields\":{\"validated\":true}"))
-    let tidy = try encode(LibraryParams.Tidy(validatedLabel: "none", legacyLabel: "purple", check: ["A"]))
-    #expect(tidy.contains("\"validated_label\":\"none\"") && tidy.contains("\"legacy_label\":\"purple\""))
     #expect(try !encode(LibraryParams.Show(uuids: ["A"], state: nil)).contains("state\":\""))
 }
 

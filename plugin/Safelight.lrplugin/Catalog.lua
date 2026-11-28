@@ -1,11 +1,13 @@
 -- Catalog commands: find and look at photos, collections, virtual copies, rotation.
 local LrApplication = import "LrApplication"
 local LrApplicationView = import "LrApplicationView"
+local LrDate = import "LrDate"
 local LrPrefs = import "LrPrefs"
 local LrStringUtils = import "LrStringUtils"
 local LrTasks = import "LrTasks"
 
 local Batch = require "Batch"
+local DevelopModule = require "DevelopModule"
 local Photos = require "Photos"
 local Result = require "Result"
 
@@ -307,36 +309,51 @@ function Catalog.safelightPhotos(params)
     }
 end
 
-local function targetIs(catalog, photo)
-    local target = catalog:getTargetPhoto()
-    return target ~= nil and Photos.uuid(target) == Photos.uuid(photo)
+-- Selects `photos` in the current source and waits (at most 2 s) until Lightroom shows the
+-- first one; returns how many photos are selected then, 0 if it did not.
+local function selectIn(catalog, photos)
+    local wanted = Photos.uuid(photos[1])
+    local deadline = LrDate.currentTime() + 2
+    catalog:setSelectedPhotos(photos[1], photos)
+    while true do
+        local target = catalog:getTargetPhoto()
+        if target and Photos.uuid(target) == wanted then
+            return #(catalog:getTargetPhotos() or {})
+        end
+        if LrDate.currentTime() > deadline then
+            return 0
+        end
+        LrTasks.sleep(0.1)
+        catalog:setSelectedPhotos(photos[1], photos) -- the source may have just changed
+    end
 end
 
 -- photos.show {uuids|target, state?}: selects the photos in Lightroom's Library, inside
 -- Safelight's smart collection for `state` when it exists and holds them, otherwise in
--- All Photographs. Changes what Lightroom shows, not the catalog.
+-- All Photographs. Changes what Lightroom shows, not the catalog. Refused while a command
+-- works in the Develop module, which acts on the photo Lightroom shows.
 function Catalog.show(params)
+    if DevelopModule.isBusy() then
+        error("Lightroom is changing a photo for an AI client. Try again in a moment.")
+    end
     local photos, missing = Photos.resolve(params)
     local catalog = Photos.catalog()
-    local source = "All Photographs"
+    LrApplicationView.switchToModule("library")
     local collection = params.state and SMART[params.state]
         and existing(knownCollections(catalog)[params.state], false)
-    LrApplicationView.switchToModule("library")
     if collection then
         catalog:setActiveSources({ collection })
-        catalog:setSelectedPhotos(photos[1], photos)
-        LrTasks.sleep(0.2)
-        if targetIs(catalog, photos[1]) then
-            source = collection:getName()
-        else
-            collection = nil
+        local shown = selectIn(catalog, photos)
+        if shown > 0 then
+            return { shown = shown, source = collection:getName(), missing = missing }
         end
     end
-    if not collection then
-        catalog:setActiveSources(catalog.kAllPhotos)
-        catalog:setSelectedPhotos(photos[1], photos)
+    catalog:setActiveSources(catalog.kAllPhotos)
+    local shown = selectIn(catalog, photos)
+    if shown == 0 then
+        error("Lightroom did not show these photos. A Library filter may hide them: turn it off and try again.")
     end
-    return { shown = #photos, source = source, missing = missing }
+    return { shown = shown, source = "All Photographs", missing = missing }
 end
 
 -- safelight.collections {set, names = {to_check, by_hand, validated}}: creates Safelight's

@@ -45,7 +45,11 @@ final class LibraryModel {
     private var pollTask: Task<Void, Never>?
     private var previewTask: Task<Void, Never>?
     private var previewQueue: [String] = []
-    private var fetchedThisSession: Set<String> = []
+    /// When each preview was last read from Lightroom. A photo's edits can change while
+    /// it is listed (an AI client works on it), so the selected photos are read again
+    /// after a while, and every listed photo once each time the window opens.
+    private var fetchedAt: [String: Date] = [:]
+    private var refreshing = false
 
     static let pageSize = 500
     static let previewSize = 512
@@ -101,6 +105,7 @@ final class LibraryModel {
 
     func windowAppeared() {
         guard pollTask == nil else { return }
+        fetchedAt = [:]
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()
@@ -112,40 +117,30 @@ final class LibraryModel {
     func windowDisappeared() {
         pollTask?.cancel()
         pollTask = nil
+        previewTask?.cancel()
+        previewTask = nil
+        previewQueue = []
     }
 
     // MARK: Refreshing
 
     func refresh() async {
-        guard !sample else {
+        guard !sample, connected else {
             loadPreviews(for: photos.map(\.uuid))
             return
         }
-        guard connected else {
-            loadPreviews(for: photos.map(\.uuid))
-            return
-        }
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
         if let review = try? await api.reviewList() {
             reasons = Dictionary(review.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         }
         for each in PhotoState.allCases {
-            let full = each == state
-            let shown = lists[each]?.photos.count ?? 0
-            guard let response = try? await api.photos(in: each, limit: full ? Self.pageSize : 1),
-                  let page = response.result
-            else { continue }
-            counts[each] = page.total
-            if full {
-                var merged = page
-                // Keep pages loaded with Load More, refreshed from the first page.
-                if shown > page.photos.count, let old = lists[each] {
-                    let fresh = Set(page.photos.map(\.uuid))
-                    merged.photos += old.photos.dropFirst(page.photos.count).filter { !fresh.contains($0.uuid) }
-                }
-                lists[each] = merged
-                loaded.insert(each)
-            } else if lists[each]?.total != page.total {
-                loaded.remove(each)  // stale: reloaded in full when shown
+            if each == state {
+                await reload(each)
+            } else if let response = try? await api.photos(in: each, limit: 1), let page = response.result {
+                if counts[each] != page.total { loaded.remove(each) }  // reloaded in full when shown
+                counts[each] = page.total
             }
         }
         store.saveLists(lists.filter { loaded.contains($0.key) })
@@ -158,25 +153,50 @@ final class LibraryModel {
         loadPreviews(for: photos.map(\.uuid))
     }
 
+    /// Reads a list again, as many pages as were shown (Load More), at most 5,000 photos.
+    private func reload(_ state: PhotoState) async {
+        let shown = min(max(lists[state]?.photos.count ?? 0, Self.pageSize), 5000)
+        var photos: [PhotoSummary] = []
+        var total = 0
+        var offset = 0
+        while offset < shown {
+            guard let response = try? await api.photos(in: state, limit: Self.pageSize, offset: offset),
+                  let page = response.result
+            else { return }  // keep what was shown
+            total = page.total
+            photos += page.photos
+            offset += Self.pageSize
+            if page.photos.count < Self.pageSize { break }
+        }
+        var seen = Set<String>()
+        photos = photos.filter { seen.insert($0.uuid).inserted }
+        lists[state] = PhotoPage(total: total, offset: 0, limit: photos.count, photos: photos)
+        counts[state] = total
+        loaded.insert(state)
+    }
+
     func loadMore() {
         guard let state, let page = lists[state], connected else { return }
+        let offset = page.photos.count
         Task {
-            guard let response = try? await api.photos(in: state, limit: Self.pageSize, offset: page.photos.count),
-                  let next = response.result
-            else { return }
-            var merged = page
-            let known = Set(page.photos.map(\.uuid))
-            merged.photos += next.photos.filter { !known.contains($0.uuid) }
-            merged.total = next.total
-            lists[state] = merged
+            guard let response = try? await api.photos(in: state, limit: Self.pageSize, offset: offset),
+                  let next = response.result,
+                  self.state == state, var current = lists[state], current.photos.count == offset
+            else { return }  // the list changed meanwhile: the next refresh reads it
+            let known = Set(current.photos.map(\.uuid))
+            current.photos += next.photos.filter { !known.contains($0.uuid) }
+            current.total = next.total
+            lists[state] = current
+            counts[state] = next.total
             loadPreviews(for: next.photos.map(\.uuid))
         }
     }
 
     // MARK: Previews
 
-    /// Shows the previews kept on disk at once, then asks Lightroom for fresh ones (once
-    /// per app session per photo, one at a time, so AI clients are not kept waiting).
+    /// Shows the previews kept on disk at once, then asks Lightroom for fresh ones, one
+    /// at a time so AI clients are not kept waiting: every listed photo once per opening of
+    /// the window, and the selected photos again when their preview is over 20 seconds old.
     private func loadPreviews(for uuids: [String]) {
         for uuid in uuids where previews[uuid] == nil {
             if let data = store.load(uuid), let image = NSImage(data: data) {
@@ -184,15 +204,21 @@ final class LibraryModel {
             }
         }
         guard connected, !sample else { return }
-        let wanted = uuids.filter { !fetchedThisSession.contains($0) && !previewQueue.contains($0) }
-        previewQueue.append(contentsOf: wanted)
+        let now = Date()
+        let stale = selection.filter { fetchedAt[$0].map { now.timeIntervalSince($0) > 20 } ?? true }
+        let unseen = uuids.filter { fetchedAt[$0] == nil }
+        // The selection first, then the list on screen, then what was queued before.
+        let wanted = Array(stale) + unseen
+        previewQueue = wanted + previewQueue.filter { !wanted.contains($0) }
+        var seen = Set<String>()
+        previewQueue = previewQueue.filter { seen.insert($0).inserted }
         guard previewTask == nil, !previewQueue.isEmpty else { return }
         previewTask = Task { [weak self] in
             while let self, !Task.isCancelled, self.connected, !self.previewQueue.isEmpty {
                 let uuid = self.previewQueue.removeFirst()
-                self.fetchedThisSession.insert(uuid)
                 if let response = try? await self.api.preview(uuid, size: Self.previewSize),
                    let data = response.result?.jpeg, let image = NSImage(data: data) {
+                    self.fetchedAt[uuid] = Date()
                     self.store.save(data, for: uuid)
                     self.previews[uuid] = image
                 }
@@ -238,7 +264,7 @@ final class LibraryModel {
     /// Selects the photos in Lightroom's Library and brings Lightroom to the front.
     func showInLightroom(_ uuids: [String]) {
         guard !uuids.isEmpty else { return }
-        if sample { return say("Shown in Lightroom Classic") }
+        if sample { return say("Shown in Lightroom") }
         Task {
             do {
                 let response = try await api.show(uuids, in: state)
@@ -252,16 +278,22 @@ final class LibraryModel {
         }
     }
 
-    /// Sets Validated on the photos: Safelight won't change their edits again and takes
-    /// its color off. Above the user's limit, the window asks first.
+    /// Sets Validated on the photos: Safelight won't change their edits again, and the hub
+    /// takes Safelight's color off right after. Above the user's limit, the window asks first.
     func validate(_ uuids: [String], token: String? = nil) {
-        guard !uuids.isEmpty, canChange || sample else { return }
-        if sample { return finishValidation(uuids) }
+        guard !uuids.isEmpty, canChange || sample, let state else { return }
+        if sample { return finishValidation(uuids, in: state) }
         busy = true
         Task {
             defer { busy = false }
             do {
-                let response = try await api.validate(uuids, confirm: token)
+                var response = try await api.validate(uuids, confirm: token)
+                // A large change can outlast the wait: follow the job until it ends.
+                var polls = 0
+                while response.state == "running" || response.state == "queued", let id = response.jobId, polls < 10 {
+                    response = try await api.job(id, waitS: 30)
+                    polls += 1
+                }
                 if let confirmation = response.confirmation {
                     pendingValidation = PendingValidation(
                         ids: uuids, token: confirmation.token,
@@ -270,20 +302,31 @@ final class LibraryModel {
                     return
                 }
                 guard response.succeeded else {
-                    return say(response.error?.message ?? "Lightroom Classic did not validate the photos.")
+                    return say(Self.wording(response.error))
                 }
                 let failed = Set((response.result?.failures ?? []).compactMap(\.uuid))
-                let done = uuids.filter { !failed.contains($0) }
-                if let settings = app.settings {
-                    _ = try? await api.tidy(validated: done, settings: settings)
+                finishValidation(uuids.filter { !failed.contains($0) }, in: state)
+                if failed.count == 1 {
+                    say("1 photo could not be validated. Look at it in Lightroom Classic.")
+                } else if failed.count > 1 {
+                    say("\(failed.count) photos could not be validated. Look at them in Lightroom Classic.")
                 }
-                try? await api.reviewDone(done)
-                finishValidation(done)
-                if !failed.isEmpty { say("\(failed.count) photos could not be validated.") }
+                try? await Task.sleep(for: .seconds(2))  // the hub takes the color off meanwhile
                 await refresh()
             } catch {
                 say(error.localizedDescription)
             }
+        }
+    }
+
+    /// The hub's refusals, in the window's words.
+    private static func wording(_ error: JobResponse<MetadataResult>.Failure?) -> String {
+        switch error?.code {
+        case "INVALID_CONFIRMATION": "The approval expired. Validate the photos again."
+        case "READ_ONLY_MODE": "Read-only mode is on. Turn it off in the Safelight menu to validate photos."
+        case "LIGHTROOM_NOT_CONNECTED", "LIGHTROOM_DISCONNECTED":
+            "Lightroom Classic is not connected. Open it, then validate the photos again."
+        default: error?.message ?? "Lightroom Classic did not validate the photos."
         }
     }
 
@@ -293,21 +336,24 @@ final class LibraryModel {
         validate(pending.ids, token: pending.token)
     }
 
-    /// Moves the selection to the next photo and updates the counts right away.
-    private func finishValidation(_ done: [String]) {
-        guard let state, var page = lists[state], !done.isEmpty else { return }
+    /// Takes the validated photos out of the list they were in, moves the selection to
+    /// the next photo, and updates the counts right away (the next refresh confirms them).
+    private func finishValidation(_ done: [String], in state: PhotoState) {
+        guard var page = lists[state], !done.isEmpty else { return }
         let gone = Set(done)
         let ids = page.photos.map(\.uuid)
-        let last = ids.lastIndex { gone.contains($0) } ?? 0
-        let next = ids[(last + 1)...].first { !gone.contains($0) } ?? ids.first { !gone.contains($0) }
+        let removed = ids.filter { gone.contains($0) }.count
+        if self.state == state, let last = ids.lastIndex(where: { gone.contains($0) }) {
+            let next = ids[ids.index(after: last)...].first { !gone.contains($0) } ?? ids.first { !gone.contains($0) }
+            selection = next.map { [$0] } ?? []
+            anchor = next
+        }
         page.photos.removeAll { gone.contains($0.uuid) }
-        page.total = max(0, page.total - done.count)
+        page.total = max(0, page.total - removed)
         lists[state] = page
         counts[state] = page.total
-        counts[.validated] = (counts[.validated] ?? 0) + done.count
-        loaded.remove(.validated)  // reloaded from Lightroom when shown
-        selection = next.map { [$0] } ?? []
-        anchor = next
+        counts[.validated] = (counts[.validated] ?? 0) + removed
+        loaded.remove(.validated)  // read again from Lightroom when shown
         say(done.count == 1 ? "Validated 1 photo" : "Validated \(done.count) photos")
     }
 

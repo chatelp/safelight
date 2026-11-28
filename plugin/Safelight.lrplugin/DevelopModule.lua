@@ -17,9 +17,15 @@ local function activeUuid()
     return photo and Photos.uuid(photo) or nil
 end
 
--- Shows `photo` in the Develop module, then runs fn() and returns its result.
--- The user's view stays in Develop on that photo afterwards.
-function DevelopModule.withPhoto(photo, fn)
+-- How many commands are working in the Develop module right now. While one is, nothing
+-- else may change the photo Lightroom shows (see Catalog.show).
+local busy = 0
+
+function DevelopModule.isBusy()
+    return busy > 0
+end
+
+local function showAndRun(photo, fn)
     local wanted = Photos.uuid(photo)
     if activeUuid() ~= wanted then
         Photos.catalog():setSelectedPhotos(photo, {})
@@ -39,7 +45,22 @@ function DevelopModule.withPhoto(photo, fn)
     end
     Logger.debug("Develop shows " .. wanted)
     LrTasks.sleep(0.3) -- let Develop finish loading the photo's settings
+    if activeUuid() ~= wanted then
+        error("Another photo was selected in Lightroom while Safelight was opening this one. Nothing was changed.")
+    end
     return fn()
+end
+
+-- Shows `photo` in the Develop module, then runs fn() and returns its result.
+-- The user's view stays in Develop on that photo afterwards.
+function DevelopModule.withPhoto(photo, fn)
+    busy = busy + 1
+    local ok, result = LrTasks.pcall(showAndRun, photo, fn)
+    busy = busy - 1
+    if not ok then
+        error(result, 0)
+    end
+    return result
 end
 
 -- Masking calls also need the Masking panel open.

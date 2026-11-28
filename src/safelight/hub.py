@@ -86,7 +86,7 @@ class Job:
     command: str
     params: dict[str, Any]
     client: str
-    internal: bool = False  # dry runs started by the hub itself
+    internal: bool = False  # the hub's own jobs (dry runs, upkeep) and the app's reads
     state: str = JobState.QUEUED
     created_at: float = field(default_factory=time.monotonic)
     started_at: float | None = None
@@ -296,8 +296,12 @@ class Hub:
                 "catalog": self.plugin.catalog,
             },
             "jobs": {
-                "queued": sum(1 for j in self._jobs.values() if j.state == JobState.QUEUED),
-                "running": sum(1 for j in self._jobs.values() if j.state == JobState.RUNNING),
+                "queued": sum(
+                    1 for j in self._jobs.values() if j.state == JobState.QUEUED and not j.internal
+                ),
+                "running": sum(
+                    1 for j in self._jobs.values() if j.state == JobState.RUNNING and not j.internal
+                ),
             },
             "clients": [
                 {"name": name, "last_seen_s_ago": round(now - seen, 1)}
@@ -451,8 +455,20 @@ class Hub:
             if gate is not None:
                 return gate
 
-        job = self.submit(command, params, client=client)
-        return await self.wait(job, wait_s)
+        # The app's own reads (its window's lists and previews) are not the user's activity:
+        # kept out of the log and the menu bar's Working state, and dropped once answered.
+        quiet = client == APP_CLIENT and not policy.mutating
+        job = self.submit(command, params, client=client, internal=quiet)
+        response = await self.wait(job, wait_s)
+        if quiet and job.finished:
+            self._jobs.pop(job.id, None)
+        if (
+            command == "metadata.set"
+            and response["state"] == JobState.SUCCEEDED
+            and (params.get("fields") or {}).get("validated") is True
+        ):
+            self._next_tidy = 0.0  # take Safelight's color off the validated photos now
+        return response
 
     def _refusal(self, command: str) -> dict[str, Any] | None:
         if self.shutting_down:

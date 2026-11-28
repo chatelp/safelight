@@ -243,6 +243,8 @@ private struct PhotoGrid: View {
             }
             .padding(16)
         }
+        .focusable()
+        .focusEffectDisabled()
         .onKeyPress(.leftArrow) { library.move(by: -1); return .handled }
         .onKeyPress(.rightArrow) { library.move(by: 1); return .handled }
         .onKeyPress(characters: ["a"]) { press in

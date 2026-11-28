@@ -117,11 +117,6 @@ public struct ShowResult: Decodable, Sendable, Equatable {
     public var source: String?
 }
 
-/// Any result the window doesn't read.
-public struct IgnoredResult: Decodable, Sendable, Equatable {
-    public init(from decoder: Decoder) throws {}
-}
-
 /// The hub's answer to `POST /v1/rpc`: a job, or a change waiting for approval.
 public struct JobResponse<Result: Decodable & Sendable>: Decodable, Sendable {
     public struct Failure: Decodable, Sendable, Equatable {
@@ -170,13 +165,6 @@ public enum LibraryParams {
         public var fields: Fields
     }
 
-    /// Takes Safelight's color off the photos just validated, as the hub's upkeep does
-    /// every half minute, so the window and Lightroom agree at once.
-    public struct Tidy: Encodable, Sendable {
-        public var validatedLabel: String
-        public var legacyLabel: String
-        public var check: [String]
-    }
 }
 
 private struct RPCBody<Params: Encodable & Sendable>: Encodable, Sendable {
@@ -188,12 +176,22 @@ private struct RPCBody<Params: Encodable & Sendable>: Encodable, Sendable {
 
 extension HubAPI {
     /// Runs a plugin command through the hub and waits for it (at most `waitS` seconds).
+    /// A change the policy checks first waits for its dry run too (up to 30 s more).
     public func run<Params: Encodable & Sendable, Result: Decodable & Sendable>(
         _ command: String, _ params: Params, confirm: String? = nil, waitS: Double = 30,
         as _: Result.Type = Result.self
     ) async throws -> JobResponse<Result> {
         let body = try Self.encoder.encode(RPCBody(command: command, params: params, waitS: waitS, confirm: confirm))
-        let data = try await request("POST", "/v1/rpc", body: body, timeout: waitS + 10)
+        let data = try await request("POST", "/v1/rpc", body: body, timeout: waitS + 45)
+        return try Self.decoder.decode(JobResponse<Result>.self, from: data)
+    }
+
+    /// A job still running: waits for it (at most `waitS` seconds) and returns its state.
+    public func job<Result: Decodable & Sendable>(
+        _ id: String, waitS: Double, as _: Result.Type = Result.self
+    ) async throws -> JobResponse<Result> {
+        let path = "/v1/jobs/" + (id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id) + "?wait_s=\(Int(waitS))"
+        let data = try await request("GET", path, timeout: waitS + 15)
         return try Self.decoder.decode(JobResponse<Result>.self, from: data)
     }
 
@@ -215,13 +213,6 @@ extension HubAPI {
         try await run(
             "metadata.set", LibraryParams.Validate(uuids: uuids, fields: .init(validated: true)),
             confirm: confirm, waitS: 120
-        )
-    }
-
-    public func tidy(validated uuids: [String], settings: HubSettings) async throws -> JobResponse<IgnoredResult> {
-        try await run(
-            "safelight.tidy",
-            LibraryParams.Tidy(validatedLabel: settings.validatedLabel, legacyLabel: "purple", check: uuids)
         )
     }
 

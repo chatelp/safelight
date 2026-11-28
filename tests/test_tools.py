@@ -1015,3 +1015,25 @@ async def test_the_app_lists_photos_by_state_and_shows_them_even_in_read_only_mo
 
         refused = await client.run("safelight.photos", {"state": "rejected"}, client=APP)
         assert refused["state"] == "failed"
+
+
+async def test_the_apps_reads_stay_out_of_the_log_and_a_validation_tidies_at_once(
+    safelight_home,
+):
+    async with lightroom(safelight_home) as (catalog, client):
+        ids = list(catalog.photos)
+        photo = catalog.photos[ids[0]]
+        photo.update(geometry_by="safelight", label="purple", safelight_label="purple")
+        assert await _until(lambda: catalog.safelight_set is not None)  # first upkeep done
+        before = (await client.activity())["last_seq"]
+
+        listed = await client.run("safelight.photos", {"state": "to_check"}, client=APP)
+        assert listed["state"] == "succeeded"
+        assert (await client.activity(before))["events"] == []
+        assert all(job["command"] != "safelight.photos" for job in (await client.jobs())["jobs"])
+
+        validated = await client.run(
+            "metadata.set", {"uuids": [ids[0]], "fields": {"validated": True}}, client=APP
+        )
+        assert validated["state"] == "succeeded"
+        assert await _until(lambda: photo["label"] is None, 5)  # not 30 s later
