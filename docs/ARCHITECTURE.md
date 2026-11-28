@@ -209,10 +209,20 @@ progress. It talks to the hub's status API:
   notifications with Approve / Decline (Approve asks to unlock the Mac);
 - photos to check: photos an AI client changed that need the user's eye (for example
   a straightened photo with a warning, or lines left to the user), kept by the hub in
-  `review.json` until the user marks them done.
+  `review.json` until the user marks them done;
+- a main window with Safelight's three lists of photos (to check, to straighten by
+  hand, validated), read with the plugin command `safelight.photos`, which uses the
+  rules of Safelight's smart collections, so the window and Lightroom show the same
+  photos. It shows Lightroom's previews (`photos.preview`, kept on disk), the hub's
+  reason for each photo, and lets the user validate photos (`metadata.set`; the hub
+  then runs its upkeep at once, which takes Safelight's color off) and show them in
+  Lightroom (`photos.show`, refused while a command works in the Develop module).
 
 The app polls `GET /v1/status` and `GET /v1/activity` every 1.5 s and changes settings
-with `PUT /v1/settings`; see [app/README.md](../app/README.md). In release builds
+with `PUT /v1/settings`; the main window reads its lists every 5 s while it is open,
+through `POST /v1/rpc` with the same policy as any client (read-only mode, approval
+above the user's limit). The app's own reads are quiet: they stay out of the activity
+log and the menu bar's Working state, and the hub forgets them once answered. See [app/README.md](../app/README.md). In release builds
 (roadmap lot L7) it will embed the Python hub, so users install a single signed `.dmg`.
 Planned (lot L9): the user's preferences, photos waiting for review, and approvals.
 

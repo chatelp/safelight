@@ -17,6 +17,7 @@ from safelight.devtools.fake_plugin import CommandError, FakePlugin
 from safelight.hub import Hub, HubServer
 from safelight.hub_client import HubClient
 from safelight.mcp_server import build_server
+from safelight.protocol import APP_CLIENT as APP
 from safelight.settings import Settings
 from safelight.upright import Line, Plan, plan_from_lines
 
@@ -983,3 +984,56 @@ async def test_photos_needing_the_users_eye_go_to_the_app(safelight_home, monkey
         assert "wrong line" in review[0]["reason"] and review[0]["file"] == "DSC00001.ARW"
         await client.review(done=["FAKE-0001"])
         assert (await client.review())["review"] == []
+
+
+async def test_the_app_lists_photos_by_state_and_shows_them_even_in_read_only_mode(
+    safelight_home,
+):
+    async with lightroom(safelight_home, read_only=True) as (catalog, client):
+        ids = list(catalog.photos)
+        catalog.photos[ids[0]]["geometry_by"] = "safelight"
+        catalog.photos[ids[1]]["geometry_by"] = "safelight"
+        catalog.photos[ids[1]]["validated"] = True
+        catalog.photos[ids[2]]["geometry_by"] = "by_hand"
+
+        async def state(name, **page):
+            response = await client.run("safelight.photos", {"state": name, **page}, client=APP)
+            assert response["state"] == "succeeded", response
+            return response["result"]
+
+        to_check = await state("to_check")
+        assert (to_check["total"], [p["uuid"] for p in to_check["photos"]]) == (1, [ids[0]])
+        assert [p["uuid"] for p in (await state("by_hand"))["photos"]] == [ids[2]]
+        assert [p["uuid"] for p in (await state("validated"))["photos"]] == [ids[1]]
+        assert (await state("validated", offset=1))["photos"] == []
+
+        shown = await client.run(
+            "photos.show", {"uuids": [ids[0]], "state": "to_check"}, client=APP
+        )
+        assert shown["state"] == "succeeded" and shown["result"]["shown"] == 1
+        assert catalog.selected == [ids[0]]
+
+        refused = await client.run("safelight.photos", {"state": "rejected"}, client=APP)
+        assert refused["state"] == "failed"
+
+
+async def test_the_apps_reads_stay_out_of_the_log_and_a_validation_tidies_at_once(
+    safelight_home,
+):
+    async with lightroom(safelight_home) as (catalog, client):
+        ids = list(catalog.photos)
+        photo = catalog.photos[ids[0]]
+        photo.update(geometry_by="safelight", label="purple", safelight_label="purple")
+        assert await _until(lambda: catalog.safelight_set is not None)  # first upkeep done
+        before = (await client.activity())["last_seq"]
+
+        listed = await client.run("safelight.photos", {"state": "to_check"}, client=APP)
+        assert listed["state"] == "succeeded"
+        assert (await client.activity(before))["events"] == []
+        assert all(job["command"] != "safelight.photos" for job in (await client.jobs())["jobs"])
+
+        validated = await client.run(
+            "metadata.set", {"uuids": [ids[0]], "fields": {"validated": True}}, client=APP
+        )
+        assert validated["state"] == "succeeded"
+        assert await _until(lambda: photo["label"] is None, 5)  # not 30 s later

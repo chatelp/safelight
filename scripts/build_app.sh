@@ -50,7 +50,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
   <key>CFBundleIconFile</key><string>Safelight</string>
   <key>CFBundleIconName</key><string>AppIcon</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
-  <key>LSUIElement</key><true/>
+  <key>LSUIElement</key><false/>
   <key>NSHumanReadableCopyright</key><string>Safelight is not affiliated with Adobe.</string>
   <key>SafelightCLIPath</key><string>${PWD}/.venv/bin/safelight</string>
 </dict>

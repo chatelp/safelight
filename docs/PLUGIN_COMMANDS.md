@@ -45,6 +45,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 | `photos.get` | R | photos, `limit`, `offset` | photo descriptions (file, format, size, capture date, rating, flag, label, camera, lens, exposure, GPS, title, caption, keywords, position in a stack, and Safelight's fields `validated`, `geometry_by`, `reject_reason`) |
 | `photos.search` | R | `search` (one criterion, or `{combine, items: [...]}`), `sort`, `ascending`, `limit`, `offset` | matching photo descriptions and `total` |
 | `photos.preview` | R | photo, `size` (64–4096, a minimum) | base64 JPEG rendered by Lightroom with the edits |
+| `photos.show` | R | photos, `state` (`to_check`, `by_hand`, `validated`; optional) | selects the photos in the Library module, inside Safelight's smart collection for `state` when it holds them, otherwise in All Photographs; changes what Lightroom shows, not the catalog; used by the app's Show in Lightroom |
 | `photos.rotate` | M | photos, `direction` (`left`/`right`) | batch result |
 | `photos.create_virtual_copies` | M | photos, `name` | ids of the new copies (one per photo) |
 
@@ -59,6 +60,7 @@ threshold) · S changes the catalog without a dry run · D destructive (always c
 | `collections.delete` | D | `collection_id` | deletes the collection (photos stay in the catalog) |
 | `safelight.collections` | S | `set`, `names` (`to_check`, `by_hand`, `validated`; `""` for none) | creates Safelight's collection set and smart collections, or renames them (found again by id, kept per catalog in the plugin's preferences); run by the hub |
 | `safelight.tidy` | S | `validated_label`, `legacy_label`, `check` (photo ids) | photos the user validated lose the color Safelight gave them (or get `validated_label`); a color the user changed since is recorded as theirs; photos marked before Safelight recorded its colors count as its own with its Geometry field and `legacy_label`; answers `changed` and which of `check` are validated; run by the hub every half minute |
+| `safelight.photos` | R | `state` (`to_check`, `by_hand`, `validated`), `limit`, `offset` | the photos in one of Safelight's states, found with the rules of its smart collections (same summaries as `photos.search`); used by the app's window |
 
 ## Metadata and keywords
 

@@ -40,6 +40,9 @@ READ_ONLY_COMMANDS = frozenset(
         "photos.get",
         "photos.search",
         "photos.preview",
+        # Selects photos in Lightroom's Library: changes what Lightroom shows, not the catalog.
+        "photos.show",
+        "safelight.photos",
         "collections.list",
         "collections.photos",
         "keywords.list",

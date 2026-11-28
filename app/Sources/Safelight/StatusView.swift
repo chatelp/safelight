@@ -251,6 +251,10 @@ struct StatusView: View {
 
     private var actions: some View {
         VStack(alignment: .leading, spacing: 2) {
+            MenuButton("Open Safelight", systemImage: "macwindow") {
+                openWindow(id: "main")
+                NSApp.activate()
+            }
             if model.state == .waiting {
                 MenuButton("Open Lightroom Classic", systemImage: "photo.stack") { model.openLightroom() }
             }

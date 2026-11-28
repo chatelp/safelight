@@ -499,6 +499,33 @@ class FakeCatalog:
         ids = {"set": 100, **{key: 101 + i for i, key in enumerate(params["names"])}}
         return {"changed": changed, "ids": ids}
 
+    async def safelight_photos(self, params: dict[str, Any], _: Progress) -> Any:
+        """Like the plugin: the photos in one of Safelight's states (its smart collections)."""
+        rules = {
+            "to_check": lambda p: p["geometry_by"] == "safelight" and not p["validated"],
+            "by_hand": lambda p: p["geometry_by"] == "by_hand" and not p["validated"],
+            "validated": lambda p: p["validated"],
+        }
+        rule = rules.get(params.get("state"))
+        if rule is None:
+            raise CommandError("COMMAND_FAILED", "state must be to_check, by_hand or validated")
+        found = [p for p in self.photos.values() if rule(p)]
+        offset = max(0, int(params.get("offset", 0)))
+        limit = max(1, min(int(params.get("limit", 100)), 500))
+        return {
+            "state": params["state"],
+            "total": len(found),
+            "offset": offset,
+            "limit": limit,
+            "photos": [self._summary(p) for p in found[offset : offset + limit]],
+        }
+
+    async def show(self, params: dict[str, Any], _: Progress) -> Any:
+        """Like the plugin: selects the photos (the fake has no smart collections to show)."""
+        photos = self._resolve(params)
+        self.selected = [p["uuid"] for p in photos]
+        return {"shown": len(photos), "source": "All Photographs", "missing": []}
+
     async def collections_delete(self, params: dict[str, Any], _: Progress) -> Any:
         found = [c for c in self.collections if c["id"] == params.get("collection_id")]
         if not found:
@@ -570,6 +597,7 @@ class FakeCatalog:
             "photos.get": self.get,
             "photos.search": self.search,
             "photos.preview": self.preview,
+            "photos.show": self.show,
             "develop.get": self.develop_get,
             "develop.apply": self.develop_apply,
             "metadata.set": self.metadata_set,
@@ -598,4 +626,5 @@ class FakeCatalog:
             "collections.delete": self.collections_delete,
             "safelight.tidy": self.tidy,
             "safelight.collections": self.safelight_collections,
+            "safelight.photos": self.safelight_photos,
         }
