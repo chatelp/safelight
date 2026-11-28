@@ -73,6 +73,7 @@ register("catalog.info", Catalog.info)
 register("photos.get", Catalog.getPhotos)
 register("photos.search", Catalog.search)
 register("photos.preview", Catalog.preview)
+register("photos.show", Catalog.show)
 register("photos.rotate", Catalog.rotate)
 register("photos.create_virtual_copies", Catalog.createVirtualCopies)
 
@@ -84,6 +85,7 @@ register("collections.add", Catalog.addToCollection)
 register("collections.remove_photos", Catalog.removeFromCollection)
 register("collections.delete", Catalog.deleteCollection)
 register("safelight.collections", Catalog.safelightCollections)
+register("safelight.photos", Catalog.safelightPhotos)
 
 -- Metadata and keywords.
 register("metadata.set", Metadata.set)

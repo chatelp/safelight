@@ -4,7 +4,9 @@ import SwiftUI
 
 @main
 struct SafelightApp: App {
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
     @State private var model: AppModel
+    @State private var library: LibraryModel
 
     init() {
         // `Safelight --render-preview <file.png>` draws the popover with sample data and exits.
@@ -18,18 +20,32 @@ struct SafelightApp: App {
             PreviewRenderer.render(to: URL(fileURLWithPath: arguments[index + 1]), preferences: true)
             exit(0)
         }
-        _model = State(initialValue: AppModel())
+        // `Safelight --sample-window` opens the main window with sample data and prints its
+        // window number, for `screencapture -l <number>`: checks the layout without a hub.
+        let sample = arguments.contains("--sample-window")
+        let model = if sample {
+            AppModel(preview: PreviewRenderer.sample)
+        } else {
+            AppModel()
+        }
+        _model = State(initialValue: model)
+        _library = State(initialValue: LibraryModel(app: model, sample: sample))
+        WindowOpener.shared.opensAtLaunch = sample
     }
 
     var body: some Scene {
         MenuBarExtra {
             StatusView(model: model)
         } label: {
-            Image(model.menuBarImageName)
-                .accessibilityLabel(model.displayedState.accessibilityLabel)
-                .help(model.displayedState.accessibilityLabel)
+            MenuBarLabel(model: model)
         }
         .menuBarExtraStyle(.window)
+
+        Window("Safelight", id: "main") {
+            MainWindow(library: library)
+        }
+        .defaultSize(width: 1040, height: 680)
+        .commands { OpenWindowCommands() }
 
         Window("Safelight Preferences", id: "preferences") {
             PreferencesView(model: model)
@@ -38,13 +54,72 @@ struct SafelightApp: App {
     }
 }
 
+/// The menu bar icon. Always on screen, so it also gives the app delegate a way to open
+/// the main window (a click on the Dock icon), and opens it at launch in sample mode.
+private struct MenuBarLabel: View {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Image(model.menuBarImageName)
+            .accessibilityLabel(model.displayedState.accessibilityLabel)
+            .help(model.displayedState.accessibilityLabel)
+            .onAppear {
+                WindowOpener.shared.open = { openWindow(id: "main") }
+                if WindowOpener.shared.opensAtLaunch { WindowOpener.shared.openMain() }
+            }
+    }
+}
+
+/// Opens the main window from places that have no SwiftUI environment (the app delegate).
+@MainActor
+final class WindowOpener {
+    static let shared = WindowOpener()
+    var open: (() -> Void)?
+    var opensAtLaunch = false
+
+    func openMain() {
+        open?()
+        NSApp.activate()
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// A click on the Dock icon with no window open shows the main window.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows {
+            MainActor.assumeIsolated { WindowOpener.shared.openMain() }
+        }
+        return true
+    }
+}
+
+private struct OpenWindowCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(before: .windowList) {
+            Button("Safelight") {
+                openWindow(id: "main")
+                NSApp.activate()
+            }
+            .keyboardShortcut("0", modifiers: .command)
+            Divider()
+        }
+    }
+}
+
 /// Renders StatusView with sample data to a PNG, in light and dark appearance side by side.
 @MainActor
 enum PreviewRenderer {
-    static func render(to url: URL, preferences: Bool = false) {
+    static var sample: (HubStatus?, [ActivityEvent]) {
         let status = try? JSONDecoder.snakeCase.decode(HubStatus.self, from: Data(sampleStatus.utf8))
         let events = (try? JSONDecoder.snakeCase.decode(ActivityPage.self, from: Data(sampleActivity.utf8)))?.events ?? []
-        let model = AppModel(preview: (status, events.reversed()))
+        return (status, events.reversed())
+    }
+
+    static func render(to url: URL, preferences: Bool = false) {
+        let model = AppModel(preview: sample)
         let view = HStack(alignment: .top, spacing: 0) {
             Group {
                 if preferences { PreferencesView(model: model) } else { StatusView(model: model) }

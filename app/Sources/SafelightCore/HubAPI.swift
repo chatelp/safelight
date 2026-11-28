@@ -64,12 +64,12 @@ public struct HubAPI: Sendable {
         return encoder
     }()
 
-    func request(_ method: String, _ path: String, body: Data? = nil) async throws -> Data {
+    func request(_ method: String, _ path: String, body: Data? = nil, timeout: TimeInterval = 5) async throws -> Data {
         guard let config = HubConfig.read(from: configURL) else { throw HubAPIError.notRunning }
         guard let url = URL(string: "http://127.0.0.1:\(config.port)\(path)") else {
             throw HubAPIError.unreachable("bad URL")
         }
-        var request = URLRequest(url: url, timeoutInterval: 5)
+        var request = URLRequest(url: url, timeoutInterval: timeout)
         request.httpMethod = method
         request.setValue(config.token, forHTTPHeaderField: "X-Safelight-Token")
         request.setValue(Self.clientName, forHTTPHeaderField: "X-Safelight-Client")

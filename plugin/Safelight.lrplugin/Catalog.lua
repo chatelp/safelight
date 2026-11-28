@@ -282,6 +282,63 @@ local function existing(id, wantSet)
     return nil
 end
 
+-- The ids of Safelight's set and smart collections in this catalog (see safelight.collections).
+local function knownCollections(catalog)
+    local all = LrPrefs.prefsForPlugin().collections or {}
+    return all[catalog:getPath()] or {}
+end
+
+-- safelight.photos {state = "to_check"|"by_hand"|"validated", limit?, offset?}: the photos
+-- in one of Safelight's states, found with the rules of its smart collections, so the app
+-- and Lightroom always show the same photos.
+function Catalog.safelightPhotos(params)
+    local rule = SMART[params.state]
+    if not rule then
+        error("state must be to_check, by_hand or validated")
+    end
+    local found = Photos.catalog():findPhotos({ searchDesc = rule() }) or {}
+    local selected, offset, limit = page(found, params)
+    return {
+        state = params.state,
+        total = #found,
+        offset = offset,
+        limit = limit,
+        photos = Photos.summaries(selected),
+    }
+end
+
+local function targetIs(catalog, photo)
+    local target = catalog:getTargetPhoto()
+    return target ~= nil and Photos.uuid(target) == Photos.uuid(photo)
+end
+
+-- photos.show {uuids|target, state?}: selects the photos in Lightroom's Library, inside
+-- Safelight's smart collection for `state` when it exists and holds them, otherwise in
+-- All Photographs. Changes what Lightroom shows, not the catalog.
+function Catalog.show(params)
+    local photos, missing = Photos.resolve(params)
+    local catalog = Photos.catalog()
+    local source = "All Photographs"
+    local collection = params.state and SMART[params.state]
+        and existing(knownCollections(catalog)[params.state], false)
+    LrApplicationView.switchToModule("library")
+    if collection then
+        catalog:setActiveSources({ collection })
+        catalog:setSelectedPhotos(photos[1], photos)
+        LrTasks.sleep(0.2)
+        if targetIs(catalog, photos[1]) then
+            source = collection:getName()
+        else
+            collection = nil
+        end
+    end
+    if not collection then
+        catalog:setActiveSources(catalog.kAllPhotos)
+        catalog:setSelectedPhotos(photos[1], photos)
+    end
+    return { shown = #photos, source = source, missing = missing }
+end
+
 -- safelight.collections {set, names = {to_check, by_hand, validated}}: creates Safelight's
 -- collection set and smart collections, or renames them. Found again by id (kept in the
 -- plugin's preferences, per catalog), so the user may move them; a deleted one comes back.

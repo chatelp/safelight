@@ -220,3 +220,72 @@ private func temporaryHome() throws -> URL {
     host.resetFailures()
     #expect(!host.gaveUp)
 }
+
+// MARK: Main window
+
+@Test func decodesAPageOfPhotosInAState() throws {
+    let response = try decode(JobResponse<PhotoPage>.self, """
+        {"job_id": "j1", "command": "safelight.photos", "state": "succeeded",
+         "result": {"state": "to_check", "total": 2, "offset": 0, "limit": 500,
+                    "photos": [{"uuid": "A", "file_name": "_DSC1.ARW", "label": "purple",
+                                "geometry_by": "safelight", "validated": false, "rating": 3},
+                               {"uuid": "B", "file_name": "_DSC2.ARW", "virtual_copy": true,
+                                "copy_name": "Copy 1"}]}}
+        """)
+    let page = try #require(response.result)
+    #expect(response.succeeded && page.total == 2)
+    #expect(page.photos[0] == PhotoSummary(uuid: "A", fileName: "_DSC1.ARW", label: "purple",
+                                           geometryBy: "safelight", validated: false))
+    #expect(page.photos[1].displayName == "_DSC2.ARW (Copy 1)")
+}
+
+@Test func aLargeValidationWaitsForApproval() throws {
+    let response = try decode(JobResponse<MetadataResult>.self, """
+        {"job_id": null, "state": "confirmation_required",
+         "confirmation": {"token": "t1", "command": "metadata.set", "affected": 312,
+                          "summary": "Set metadata on 312 photos", "reason": "More than 50 photos.",
+                          "expires_in_s": 600, "approval_id": "a1", "instructions": "..."}}
+        """)
+    #expect(!response.succeeded && response.result == nil)
+    #expect(response.confirmation?.token == "t1" && response.confirmation?.affected == 312)
+    let failed = try decode(JobResponse<MetadataResult>.self, """
+        {"job_id": null, "state": "failed", "error": {"code": "READ_ONLY_MODE", "message": "Read-only mode is on."}}
+        """)
+    #expect(failed.error?.code == "READ_ONLY_MODE")
+}
+
+@Test func windowCommandsAreSentInSnakeCase() throws {
+    let encode = { (value: any Encodable) in
+        String(decoding: try HubAPI.encoder.encode(value), as: UTF8.self)
+    }
+    #expect(try encode(LibraryParams.StatePage(state: .toCheck, limit: 500, offset: 0))
+        .contains("\"state\":\"to_check\""))
+    #expect(try encode(LibraryParams.Validate(uuids: ["A"], fields: .init(validated: true)))
+        .contains("\"fields\":{\"validated\":true}"))
+    let tidy = try encode(LibraryParams.Tidy(validatedLabel: "none", legacyLabel: "purple", check: ["A"]))
+    #expect(tidy.contains("\"validated_label\":\"none\"") && tidy.contains("\"legacy_label\":\"purple\""))
+    #expect(try !encode(LibraryParams.Show(uuids: ["A"], state: nil)).contains("state\":\""))
+}
+
+@Test func listsAreNamedLikeTheirCollectionsInLightroom() {
+    var settings = HubSettings()
+    #expect(PhotoState.byHand.title(settings) == "To straighten by hand")
+    settings.collections.toCheck = "À vérifier"
+    settings.collections.validated = ""
+    #expect(PhotoState.toCheck.title(settings) == "À vérifier")
+    #expect(PhotoState.validated.title(settings) == "Validated")  // not created in Lightroom
+    #expect(PhotoState.toCheck.label(settings) == "purple" && PhotoState.validated.label(nil) == "none")
+}
+
+@Test func previewsAndListsAreKeptOnDisk() throws {
+    let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: folder) }
+    let store = PreviewStore(folder: folder)
+    #expect(store.load("A") == nil)
+    store.save(Data([1, 2, 3]), for: "A")
+    #expect(store.load("A") == Data([1, 2, 3]))
+    #expect(store.file("../x").lastPathComponent == "x.jpg")
+    let lists: [PhotoState: PhotoPage] = [.toCheck: PhotoPage(total: 1, photos: [PhotoSummary(uuid: "A")])]
+    store.saveLists(lists)
+    #expect(store.loadLists() == lists)
+}

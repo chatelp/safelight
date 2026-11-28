@@ -16,6 +16,7 @@
     "photos.get": {"photos": true, "params": ["limit", "offset"]},
     "photos.search": {"params": ["search", "sort", "ascending", "limit", "offset"]},
     "photos.preview": {"photos": true, "params": ["size"]},
+    "photos.show": {"photos": true, "params": ["state"]},
     "photos.rotate": {"photos": true, "params": ["direction"]},
     "photos.create_virtual_copies": {"photos": true, "params": ["name"]},
 
@@ -27,6 +28,7 @@
     "collections.delete": {"params": ["collection_id"]},
     "safelight.collections": {"params": ["set", "names"]},
     "safelight.tidy": {"params": ["validated_label", "legacy_label", "check"]},
+    "safelight.photos": {"params": ["state", "limit", "offset"]},
 
     "metadata.set": {"photos": true, "params": ["fields"]},
     "keywords.list": {"params": ["query", "limit"]},
